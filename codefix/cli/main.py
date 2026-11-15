@@ -327,6 +327,26 @@ def crew_serve(host: str = "127.0.0.1", port: int = 8100):
     uvicorn.run(build_app(url), host=host, port=port, log_level="warning")
 
 
+@app.command("seed")
+def seed(task_ids: str = typer.Option("", help="Comma list of task ids; default: pick a spread automatically"),
+         limit: int = typer.Option(12, help="How many runs to seed when picking automatically")):
+    """Bake finished runs into benchmarks/seed/ so a cold deployed instance is never blank.
+
+    The Dockerfile copies benchmarks/ into the image, and the web app installs the seed on
+    startup when the data directory has no database yet.
+    """
+    from codefix.eval.seed import SEED_DIR, export_seed, pick_demo_runs
+
+    ids = [t.strip() for t in task_ids.split(",") if t.strip()] or pick_demo_runs(limit)
+    if not ids:
+        con.print("[red]No finished non-mock runs to seed. Run `codefix demo` or `codefix bench` first.[/]")
+        raise typer.Exit(1)
+    counts = export_seed(ids)
+    con.print(f"Seeded {len(ids)} runs -> {SEED_DIR}")
+    for k, v in counts.items():
+        con.print(f"  {k:12} {v}")
+
+
 @app.command()
 def graph(out: Path = typer.Option(config.ROOT / "docs")):
     """Export the architecture diagrams (docs/graph.png + per-architecture, Mermaid source)."""

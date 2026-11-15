@@ -31,11 +31,19 @@ from pydantic import BaseModel, Field
 
 from codefix import config, prompts
 from codefix.blackboard import new_task_id
+from codefix.eval.seed import restore_seed
 from codefix.graph import runner
 
 UI_DIR = Path(__file__).resolve().parent.parent / "ui"
 app = FastAPI(title="CodeFix AI", version="0.2.0")
 config.settings()  # loads .env (ZAI_API_KEY, GITHUB_TOKEN) before any request
+config.ensure_dirs()
+
+# On Cloud Run every instance starts with an empty /tmp, so Runs and Dashboard would be blank
+# until someone starts a run. Install the seed runs baked into the image — but only when there
+# is no database yet, so real runs (including ones made during a demo) are never overwritten.
+if restore_seed():
+    print(f"seeded demo runs into {config.DATA_DIR}")
 _threads: dict[str, threading.Thread] = {}
 
 
