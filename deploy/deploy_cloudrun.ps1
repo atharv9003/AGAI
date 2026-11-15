@@ -71,7 +71,12 @@ foreach ($secret in @("zai-api-key", "codefix-a2a-token")) {
 
 # --- build + deploy -------------------------------------------------------------------------------
 $auth = if ($Public) { "--allow-unauthenticated" } else { "--no-allow-unauthenticated" }
-Run @("run", "deploy", $Service, "--source", ".", "--region", $Region, $auth,
+# --no-cpu-throttling is REQUIRED, not a tuning knob. A run is started by POST /api/runs, which
+# returns a task_id immediately and does the pipeline on a background thread. Cloud Run's default
+# allocates CPU only while a request is in flight, so that thread is starved the moment the POST
+# responds and the run sits at 0 attempts forever. Always-allocated CPU costs more per instance-
+# hour, but the service still scales to zero when idle.
+Run @("run", "deploy", $Service, "--source", ".", "--region", $Region, $auth, "--no-cpu-throttling",
       "--memory", "4Gi", "--cpu", "2", "--timeout", "3600", "--concurrency", "4", "--max-instances", "2",
       "--set-secrets", "ZAI_API_KEY=zai-api-key:latest,CODEFIX_A2A_TOKEN=codefix-a2a-token:latest", "--quiet")
 
