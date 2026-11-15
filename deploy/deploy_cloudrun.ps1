@@ -45,16 +45,35 @@ try {
     }
 } finally { Remove-Item $tmp -Force }
 
+# --- CODEFIX_A2A_TOKEN -> Secret Manager -----------------------------------------------------
+# On a -Public service the A2A endpoint is reachable by anyone who finds the URL, so the shared
+# bearer secret is what stops a stranger driving the CrewAI workers (and spending the API key).
+# Reuse the value from .env if present, otherwise mint one; the agent card stays public either way.
+& gcloud secrets describe codefix-a2a-token *> $null
+if ($LASTEXITCODE -ne 0) {
+    $envTok = Get-Content .env -ErrorAction SilentlyContinue |
+              Where-Object { $_ -match '^CODEFIX_A2A_TOKEN=(.+)$' } | Select-Object -First 1
+    $token = if ($envTok) { ($envTok -replace '^CODEFIX_A2A_TOKEN=', '').Trim() }
+             else { [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)) }
+    $tmp2 = New-TemporaryFile
+    try {
+        [IO.File]::WriteAllText($tmp2, $token)
+        Run @("secrets", "create", "codefix-a2a-token", "--replication-policy=automatic", "--data-file=$tmp2")
+    } finally { Remove-Item $tmp2 -Force }
+}
+
 $number = (& gcloud projects describe $Project --format "value(projectNumber)").Trim()
 $runtimeSa = "$number-compute@developer.gserviceaccount.com"
-Run @("secrets", "add-iam-policy-binding", "zai-api-key", "--member=serviceAccount:$runtimeSa",
-      "--role=roles/secretmanager.secretAccessor", "--quiet")
+foreach ($secret in @("zai-api-key", "codefix-a2a-token")) {
+    Run @("secrets", "add-iam-policy-binding", $secret, "--member=serviceAccount:$runtimeSa",
+          "--role=roles/secretmanager.secretAccessor", "--quiet")
+}
 
 # --- build + deploy -------------------------------------------------------------------------------
 $auth = if ($Public) { "--allow-unauthenticated" } else { "--no-allow-unauthenticated" }
 Run @("run", "deploy", $Service, "--source", ".", "--region", $Region, $auth,
       "--memory", "4Gi", "--cpu", "2", "--timeout", "3600", "--concurrency", "4", "--max-instances", "2",
-      "--set-secrets", "ZAI_API_KEY=zai-api-key:latest", "--quiet")
+      "--set-secrets", "ZAI_API_KEY=zai-api-key:latest,CODEFIX_A2A_TOKEN=codefix-a2a-token:latest", "--quiet")
 
 $url = (& gcloud run services describe $Service --region $Region --format "value(status.url)").Trim()
 Run @("run", "services", "update", $Service, "--region", $Region, "--update-env-vars", "CODEFIX_PUBLIC_URL=$url",
@@ -63,7 +82,11 @@ Run @("run", "services", "update", $Service, "--region", $Region, "--update-env-
 Write-Host ""
 Write-Host "Deployed: $url"
 Write-Host "  web app        $url/"
-Write-Host "  A2A agent card $url/a2a/crew/.well-known/agent-card.json"
+Write-Host "  A2A agent card $url/a2a/crew/.well-known/agent-card.json  (public by design)"
+if ($Public) {
+    Write-Host "  A2A message/send requires the bearer token in Secret Manager: codefix-a2a-token"
+    Write-Host "  Read it with:  gcloud secrets versions access latest --secret codefix-a2a-token"
+}
 if (-not $Public) {
     Write-Host "  (private service: open it through  gcloud run services proxy $Service --region $Region  -> http://localhost:8080)"
 }
