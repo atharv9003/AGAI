@@ -29,10 +29,14 @@ dependencies = [
     # no Windows wheel (needs a Rust toolchain); code_search falls back to a pure-Python scan
     "ripgrep==15.1.0; sys_platform != 'win32'",
     "httpx==0.28.1",
+    # RUNTIME, not a test-only tool: the Tester agent executes the *target repo's* pytest suite,
+    # so pytest must exist wherever CodeFix runs. Leaving it in [dev] meant the deployed image
+    # had no pytest and every Python bug reported "0 tests" and escalated.
+    "pytest==9.1.1",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==9.1.1"]
+dev = []  # pytest is a runtime dependency (see above); kept so `-e ".[dev]"` still works
 
 [project.scripts]
 codefix = "codefix.cli.main:main"

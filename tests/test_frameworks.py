@@ -183,3 +183,24 @@ def test_only_crewai_and_adk_agent_frameworks():
     assert offenders == []
     deps = (root / "pyproject.toml").read_text(encoding="utf-8")
     assert "crewai" in deps and "google-adk" in deps and "langgraph" not in deps and "langchain" not in deps
+
+
+def test_test_runners_are_runtime_dependencies_not_dev_extras():
+    """The Tester agent executes the target repo's suite, so its runners must exist wherever
+    CodeFix is deployed - not only in a dev install.
+
+    Regression guard: pytest sat in [project.optional-dependencies].dev while the Dockerfile ran
+    `pip install -e .`, so the deployed image had no pytest. Every Python bug came back with
+    "0 tests", which the runner correctly classes as an infra failure - and the run escalated
+    instead of being fixed. JS bugs still passed, because `node --test` ships with node, which
+    is what made it look like the pipeline worked.
+    """
+    import tomllib
+    from pathlib import Path
+
+    data = tomllib.loads((Path(__file__).resolve().parent.parent / "pyproject.toml")
+                         .read_text(encoding="utf-8"))
+    runtime = " ".join(data["project"]["dependencies"])
+    assert "pytest" in runtime, "pytest must be a runtime dependency: the Tester runs it"
+    dev = " ".join(data["project"].get("optional-dependencies", {}).get("dev", []))
+    assert "pytest" not in dev, "pytest belongs in runtime deps only, so a plain install gets it"
