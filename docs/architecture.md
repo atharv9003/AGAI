@@ -40,7 +40,7 @@ not restart the job: the failure log is sent back to the agent that wrote the pa
 
 The ADK side and the CrewAI side never import each other's agent code: they talk **A2A**
 (§4). Both frameworks reach models through small adapters onto one LLM layer (`codefix/llm.py`:
-Gemini or Claude, plus an offline oracle mock), so every model call is measured identically
+Z.AI GLM or Claude, plus an offline oracle mock), so every model call is measured identically
 (`codefix/adk_side/model.py` is an ADK `BaseLlm`; `codefix/crew_side/llm.py` is a CrewAI
 `BaseLLM`).
 
@@ -176,9 +176,20 @@ one repair turn.
 Retrieved chunk ids are shown to the model and **citations are validated** against the ids
 actually retrieved; unknown ids are dropped and logged (`citation_dropped`).
 
-**Model selection** (`config/models.yaml`, swappable per role): Manager and Judge on a small,
-fast model; Diagnoser and Fixer on a stronger model. The Judge **must differ** from the
-generating models (self-preference bias; enforced in `codefix/config.py`).
+**Model selection** (`config/models.yaml`, swappable per role). The provider is **Z.AI (GLM)**, a
+paid API, so model choice is a cost decision as well as a capability one:
+
+| Role | Model | Reasoning | Why |
+|---|---|---|---|
+| Diagnoser | `glm-5.3` (flagship) | `effort: high` | Multi-step ReAct over traces and code — the hardest reasoning in the pipeline, so this is where the budget goes |
+| Fixer | `glm-4.7` | `effort: medium` | Code generation from an *already-localised* diagnosis, at roughly a third of the flagship's token price |
+| Manager | `glm-4.6` | **disabled** | Chooses between two or three *legal* transitions. Z.AI bills reasoning tokens as output and defaults to `reasoning_effort: max`, so thinking is explicitly turned off here |
+| Judge | `glm-4.6` | `effort: low` | **Must differ** from both generating models (self-preference bias; enforced in `codefix/config.py`) |
+
+Z.AI's reasoning controls are per-model: `glm-5.3` accepts only `low`/`high`/`max` and thinks
+unconditionally. `ZaiLLM.normalize_effort` maps an unsupported level to the nearest supported one
+(ties round *up*) instead of sending it verbatim, so a config mistake degrades a run rather than
+returning HTTP 400 in the middle of a paid benchmark.
 
 ## 6. Guardrails and safety (`codefix/guardrails.py`)
 
@@ -232,7 +243,7 @@ billed cost, and what the same volume would cost at paid list prices).
 
 One container (`Dockerfile`): FastAPI web app + ADK orchestration + CrewAI A2A service
 (`/a2a/crew/`) + MCP tool server subprocess, with the embedding model baked in.
-`deploy/deploy_cloudrun.ps1 -Project <id>` builds it with Cloud Build, stores `GEMINI_API_KEY`
+`deploy/deploy_cloudrun.ps1 -Project <id>` builds it with Cloud Build, stores `ZAI_API_KEY`
 in Secret Manager, deploys to Cloud Run (private by default; `-Public` to open it) and sets
 `CODEFIX_PUBLIC_URL` so the A2A agent card advertises the real URL. Run data on Cloud Run lives
 in `/tmp` and does not survive instance restarts.

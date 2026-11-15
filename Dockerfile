@@ -1,6 +1,6 @@
 # CodeFix AI — web app + ADK orchestration + CrewAI A2A workers + MCP tool server, one container.
 # Built by Cloud Build for Cloud Run (`deploy/deploy_cloudrun.ps1`), or locally:
-#   docker build -t codefix-ai . && docker run -p 8080:8080 -e GEMINI_API_KEY=... codefix-ai
+#   docker build -t codefix-ai . && docker run -p 8080:8080 -e ZAI_API_KEY=... codefix-ai
 FROM python:3.11-slim
 
 RUN apt-get update \

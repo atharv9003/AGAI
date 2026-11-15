@@ -23,6 +23,7 @@ class RoleConfig(BaseModel):
     model: str
     effort: str | None = None
     max_tokens: int = 8000
+    thinking: bool = True       # Z.AI: reasoning is billed, so a pure routing role turns it off
     thinking_display: str | None = None
     fallbacks: str | None = None
 
@@ -47,7 +48,7 @@ class PipelineConfig(BaseModel):
 
 
 class Settings(BaseModel):
-    provider: Literal["anthropic", "google"] = "anthropic"
+    provider: Literal["anthropic", "zai"] = "zai"
     roles: dict[str, RoleConfig]
     pricing: dict[str, Price] = Field(default_factory=dict)
     # paid-tier list prices used only for the benchmark's "what would this cost" estimate

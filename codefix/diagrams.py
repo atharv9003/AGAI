@@ -80,12 +80,12 @@ DEPLOYMENT = """flowchart LR
           X --> MS
         end
       end
-      SM[("Secret Manager<br/>gemini-api-key")]
+      SM[("Secret Manager<br/>zai-api-key")]
       AR[("Artifact Registry<br/>container image")]
     end
-    SM -->|"mounted as GEMINI_API_KEY,<br/>never baked into the image"| CT
+    SM -->|"mounted as ZAI_API_KEY,<br/>never baked into the image"| CT
     AR -->|"deployed revision"| CR
-    A -->|HTTPS| G["Google AI Studio<br/>Gemini API"]
+    A -->|HTTPS| G["Z.AI<br/>GLM API"]
     X -->|HTTPS| G
     MS -->|"git push / REST"| GH["GitHub<br/>pull request,<br/>after human approval"]
     MS -.->|"runs.db + traces in /tmp:<br/>not durable across restarts"| NOTE["ephemeral<br/>run storage"]"""

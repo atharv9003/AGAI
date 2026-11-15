@@ -3,7 +3,7 @@
 * One model per role, from config/models.yaml (swappable with no code change).
 * Structured outputs (`output_config.format` JSON schema) for every agent response, validated
   again with Pydantic on our side.
-* Anthropic and Google AI Studio providers.
+* Anthropic and Z.AI (GLM) providers; Z.AI speaks the OpenAI chat-completions dialect.
 * Every call -> llm_calls row + `llm_call` JSONL trace event (model, served model, tokens,
   cache tokens, USD cost, latency, stop reason).
 * `MockLLM` implements the same interface for tests/offline demos (no API key needed).
@@ -195,21 +195,55 @@ class AnthropicLLM(BaseLLM):
         raise LLMError(f"{rc.model} produced invalid structured output: {last_err}")
 
 
-class GoogleLLM(BaseLLM):
-    """Google Gemini via the OpenAI-compatible Gemini API."""
+class OpenAICompatLLM(BaseLLM):
+    """Shared client for providers that speak the OpenAI chat-completions dialect.
+
+    Subclasses set `endpoint` and `API_KEY_ENV`, and may add provider-specific body fields in
+    `_extra_payload`. Structured output is obtained by asking for `response_format=json_object`
+    and inlining the JSON Schema in the system prompt, because these APIs accept `json_object`
+    but not a schema; the reply is validated with Pydantic on our side either way, and an
+    invalid reply gets one repair turn.
+    """
 
     mode = "live"
-    endpoint = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+    endpoint = ""
+    API_KEY_ENV: tuple[str, ...] = ()
 
     def __init__(self, settings: Settings, telemetry: Telemetry | None = None):
         super().__init__(settings, telemetry)
         import httpx
 
         self._httpx = httpx
-        self.client = httpx.Client(
-            timeout=600,
-            headers={"Authorization": f"Bearer {os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY', '')}"},
-        )
+        self.client = httpx.Client(timeout=600, headers={"Authorization": f"Bearer {self.api_key()}"})
+
+    @classmethod
+    def api_key(cls) -> str:
+        return next((v for v in (os.environ.get(n) for n in cls.API_KEY_ENV) if v), "")
+
+    def _extra_payload(self, rc: RoleConfig) -> dict[str, Any]:
+        """Provider-specific request fields (reasoning controls and the like)."""
+        return {"reasoning_effort": rc.effort} if rc.effort else {}
+
+    # Providers may silently alias a requested model to a different one (a plan that maps several
+    # ids onto one served model, a deprecated id, a fallback). That is invisible in the response
+    # body but it breaks two things that matter here: cost accounting is per *served* model, and
+    # the judge-vs-generator independence check in config.py compares *configured* names. So the
+    # first time a request is served by a different model than asked for, say so loudly.
+    _alias_warned: set[tuple[str, str]] = set()
+
+    def _check_alias(self, requested: str, served: str) -> None:
+        if not served or served == requested:
+            return
+        pair = (requested, served)
+        if pair in self._alias_warned:
+            return
+        self._alias_warned.add(pair)
+        import sys
+
+        print(f"warning: requested model {requested!r} but the provider served {served!r}. "
+              f"Cost is accounted against {served!r}; check config/models.yaml uses ids your "
+              f"plan actually serves, and that the judge still differs from the generators.",
+              file=sys.stderr)
 
     @staticmethod
     def _content_text(content: Any) -> str:
@@ -238,13 +272,13 @@ class GoogleLLM(BaseLLM):
             "messages": request_messages,
             "max_tokens": rc.max_tokens,
             "response_format": {"type": "json_object"},
+            **self._extra_payload(rc),
         }
-        if rc.effort:
-            payload["reasoning_effort"] = rc.effort
         return self._post_with_backoff(payload)
 
-    # Free-tier quotas are per minute: a 429 / 5xx is retried with backoff (honouring the
-    # server's "retry in Ns" hint) instead of failing the run. Daily-quota errors are not retried.
+    # Rate limits are per minute on every plan: a 429 / 5xx is retried with backoff (honouring
+    # the server's "retry in Ns" hint) instead of losing the run. An exhausted daily/total quota
+    # is not retried, because waiting minutes will not help.
     RETRY_STATUS = {429, 500, 502, 503, 504}
     MAX_RETRIES = int(os.environ.get("CODEFIX_LLM_MAX_RETRIES", "6"))
 
@@ -296,6 +330,7 @@ class GoogleLLM(BaseLLM):
             latency = int((time.time() - started) * 1000)
             choice = data["choices"][0]
             answer = choice["message"]
+            self._check_alias(rc.model, data.get("model") or "")
             text = self._content_text(answer.get("content") or "")
             usage_data = data.get("usage") or {}
             usage = Usage(
@@ -315,7 +350,8 @@ class GoogleLLM(BaseLLM):
                 stop_reason=choice.get("finish_reason"),
                 assistant_content=[{"type": "text", "text": text}],
             )
-            if answer.get("refusal") or result.stop_reason == "content_filter":
+            # "content_filter" is the OpenAI spelling, "sensitive" is Z.AI's
+            if answer.get("refusal") or result.stop_reason in ("content_filter", "sensitive"):
                 self._emit(task_id, agent, result, rc.model, latency, "refusal")
                 raise LLMRefusal(f"{result.served_model} refused the request")
             try:
@@ -331,6 +367,54 @@ class GoogleLLM(BaseLLM):
                                                   "Reply again with only valid JSON for the schema."},
                 ]
         raise LLMError(f"{rc.model} produced invalid structured output: {last_err}")
+
+
+class ZaiLLM(OpenAICompatLLM):
+    """Z.AI GLM models (paid) over the OpenAI-compatible chat-completions endpoint.
+
+    Reasoning is billed, so it is controlled per role rather than left at the API default:
+    Z.AI enables thinking with `reasoning_effort: max` unless told otherwise, which is waste
+    on a routing call that chooses between two or three legal transitions. `thinking: false`
+    in `config/models.yaml` turns it off for such a role.
+    """
+
+    endpoint = "https://api.z.ai/api/paas/v4/chat/completions"
+    API_KEY_ENV = ("ZAI_API_KEY", "GLM_API_KEY")
+
+    # reasoning_effort values each model actually accepts (docs.z.ai). A model missing from this
+    # map takes the full set. Anything else is mapped to the nearest supported level instead of
+    # being sent verbatim, so a config typo degrades a run rather than 400-ing it mid-benchmark.
+    EFFORT_SUPPORT: dict[str, tuple[str, ...]] = {
+        "glm-5.3": ("low", "high", "max"),
+        "glm-5.3-flash": ("low", "high", "max"),
+        "glm-5.2": ("none", "minimal", "high", "max"),
+    }
+    EFFORT_ORDER = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
+    # GLM-5.3 and the 5.3 flash models think unconditionally, so `thinking: false` cannot save
+    # money on them — only a lower `effort` can. Sending "disabled" is simply ignored by the API.
+    FORCED_THINKING = ("glm-5.3",)
+
+    @classmethod
+    def normalize_effort(cls, model: str, effort: str) -> str:
+        allowed = cls.EFFORT_SUPPORT.get(model)
+        if not allowed or effort in allowed:
+            return effort
+        if effort not in cls.EFFORT_ORDER:
+            return allowed[-1]
+        want = cls.EFFORT_ORDER.index(effort)
+        # nearest supported level; a tie rounds *up*, so an unsupported level never silently
+        # buys less reasoning than the config asked for
+        return min(allowed, key=lambda a: (abs(cls.EFFORT_ORDER.index(a) - want),
+                                           -cls.EFFORT_ORDER.index(a)))
+
+    def _extra_payload(self, rc: RoleConfig) -> dict[str, Any]:
+        thinking = rc.thinking and not rc.model.startswith(self.FORCED_THINKING)
+        if not thinking and not rc.model.startswith(self.FORCED_THINKING):
+            return {"thinking": {"type": "disabled"}}
+        out: dict[str, Any] = {"thinking": {"type": "enabled"}}
+        if rc.effort:
+            out["reasoning_effort"] = self.normalize_effort(rc.model, rc.effort)
+        return out
 
 
 MockHandler = Callable[[str, str, list[dict], type[BaseModel], int], dict]
@@ -368,10 +452,10 @@ def make_llm(mode: str, settings: Settings, telemetry: Telemetry | None = None,
         if handler is None:
             raise ValueError("mock mode needs a handler")
         return MockLLM(settings, handler, telemetry)
-    if settings.provider == "google":
-        if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
-            raise LLMError("GEMINI_API_KEY is not set (get a free key from Google AI Studio) — or run with --llm mock")
-        return GoogleLLM(settings, telemetry)
+    if settings.provider == "zai":
+        if not ZaiLLM.api_key():
+            raise LLMError("ZAI_API_KEY is not set (put your Z.AI key in .env) — or run with --llm mock")
+        return ZaiLLM(settings, telemetry)
     if not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN")):
         raise LLMError("ANTHROPIC_API_KEY is not set (put it in .env) — or run with --llm mock")
     return AnthropicLLM(settings, telemetry)

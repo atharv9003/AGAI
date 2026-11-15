@@ -35,7 +35,7 @@ from codefix.graph import runner
 
 UI_DIR = Path(__file__).resolve().parent.parent / "ui"
 app = FastAPI(title="CodeFix AI", version="0.2.0")
-config.settings()  # loads .env (GEMINI_API_KEY, GITHUB_TOKEN) before any request
+config.settings()  # loads .env (ZAI_API_KEY, GITHUB_TOKEN) before any request
 _threads: dict[str, threading.Thread] = {}
 
 
@@ -49,8 +49,10 @@ _mount_a2a()
 
 
 def _has_key() -> bool:
-    if config.settings().provider == "google":
-        return bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
+    if config.settings().provider == "zai":
+        from codefix.llm import ZaiLLM
+
+        return bool(ZaiLLM.api_key())
     return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
 
 
@@ -115,7 +117,7 @@ def start_run(req: RunRequest):
     if not Path(repo).is_dir():
         raise HTTPException(400, f"repo path not found: {repo}")
     if req.llm == "live" and not _has_key():
-        raise HTTPException(400, "no model API key is set (GEMINI_API_KEY in .env) — or use the mock LLM with a seeded bug")
+        raise HTTPException(400, "no model API key is set (ZAI_API_KEY in .env) — or use the mock LLM with a seeded bug")
     extra = {k: v for k, v in (("variant", req.variant), ("persona", req.persona)) if v}
     try:
         prompts.check(extra.get("variant", "react"), extra.get("persona", "default"))

@@ -3,7 +3,7 @@
   Deploy CodeFix AI (web app + ADK/CrewAI agents + A2A + MCP) to Google Cloud Run.
 
 .DESCRIPTION
-  Builds the Dockerfile with Cloud Build (no local Docker needed), stores GEMINI_API_KEY from
+  Builds the Dockerfile with Cloud Build (no local Docker needed), stores ZAI_API_KEY from
   .env in Secret Manager (never in the image or in plain env vars), deploys the service and then
   sets CODEFIX_PUBLIC_URL so the A2A agent card advertises the real URL.
 
@@ -31,30 +31,30 @@ Run @("config", "set", "project", $Project)
 Run @("services", "enable", "run.googleapis.com", "cloudbuild.googleapis.com", "artifactregistry.googleapis.com",
       "secretmanager.googleapis.com")
 
-# --- GEMINI_API_KEY -> Secret Manager (read from .env, never printed) -------------------------
-$line = Get-Content .env | Where-Object { $_ -match '^GEMINI_API_KEY=(.+)$' } | Select-Object -First 1
-if (-not $line) { throw "GEMINI_API_KEY is not set in .env" }
+# --- ZAI_API_KEY -> Secret Manager (read from .env, never printed) ----------------------------
+$line = Get-Content .env | Where-Object { $_ -match '^ZAI_API_KEY=(.+)$' } | Select-Object -First 1
+if (-not $line) { throw "ZAI_API_KEY is not set in .env" }
 $tmp = New-TemporaryFile
 try {
-    [IO.File]::WriteAllText($tmp, ($line -replace '^GEMINI_API_KEY=', '').Trim())
-    & gcloud secrets describe gemini-api-key *> $null
+    [IO.File]::WriteAllText($tmp, ($line -replace '^ZAI_API_KEY=', '').Trim())
+    & gcloud secrets describe zai-api-key *> $null
     if ($LASTEXITCODE -ne 0) {
-        Run @("secrets", "create", "gemini-api-key", "--replication-policy=automatic", "--data-file=$tmp")
+        Run @("secrets", "create", "zai-api-key", "--replication-policy=automatic", "--data-file=$tmp")
     } else {
-        Run @("secrets", "versions", "add", "gemini-api-key", "--data-file=$tmp")
+        Run @("secrets", "versions", "add", "zai-api-key", "--data-file=$tmp")
     }
 } finally { Remove-Item $tmp -Force }
 
 $number = (& gcloud projects describe $Project --format "value(projectNumber)").Trim()
 $runtimeSa = "$number-compute@developer.gserviceaccount.com"
-Run @("secrets", "add-iam-policy-binding", "gemini-api-key", "--member=serviceAccount:$runtimeSa",
+Run @("secrets", "add-iam-policy-binding", "zai-api-key", "--member=serviceAccount:$runtimeSa",
       "--role=roles/secretmanager.secretAccessor", "--quiet")
 
 # --- build + deploy -------------------------------------------------------------------------------
 $auth = if ($Public) { "--allow-unauthenticated" } else { "--no-allow-unauthenticated" }
 Run @("run", "deploy", $Service, "--source", ".", "--region", $Region, $auth,
       "--memory", "4Gi", "--cpu", "2", "--timeout", "3600", "--concurrency", "4", "--max-instances", "2",
-      "--set-secrets", "GEMINI_API_KEY=gemini-api-key:latest", "--quiet")
+      "--set-secrets", "ZAI_API_KEY=zai-api-key:latest", "--quiet")
 
 $url = (& gcloud run services describe $Service --region $Region --format "value(status.url)").Trim()
 Run @("run", "services", "update", $Service, "--region", $Region, "--update-env-vars", "CODEFIX_PUBLIC_URL=$url",

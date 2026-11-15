@@ -70,7 +70,7 @@ def test_deployment_diagram_matches_the_deploy_script():
     from codefix import config
 
     script = (config.ROOT / "deploy" / "deploy_cloudrun.ps1").read_text(encoding="utf-8")
-    for token in ("codefix-ai", "asia-south1", "gemini-api-key"):
+    for token in ("codefix-ai", "asia-south1", "zai-api-key"):
         assert token in script, f"{token} is not in the deploy script"
         assert token in DEPLOYMENT, f"{token} is in the deploy script but not the deployment diagram"
 

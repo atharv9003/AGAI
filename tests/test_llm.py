@@ -10,9 +10,9 @@ from codefix.agents.base import JudgeVerdict, ReActStep
 from codefix.llm import (
     FALLBACK_BETA,
     AnthropicLLM,
-    GoogleLLM,
     LLMError,
     LLMRefusal,
+    ZaiLLM,
     make_llm,
     strict_schema,
 )
@@ -130,7 +130,7 @@ def test_fallback_served_model_priced_by_served_model(llm):
     assert res.cost_usd == pytest.approx((1000 * 5 + 200 * 25 + 500 * 0.5) / 1e6)
 
 
-class FakeGoogleResponse:
+class FakeHTTPResponse:
     def __init__(self, data, status_code=200):
         self._data = data
         self.status_code = status_code
@@ -141,7 +141,7 @@ class FakeGoogleResponse:
         return self._data
 
 
-class FakeGoogleClient:
+class FakeHTTPClient:
     def __init__(self, replies):
         self.replies, self.calls = list(replies), []
 
@@ -150,28 +150,38 @@ class FakeGoogleClient:
         return self.replies.pop(0)
 
 
-def google_response(text, model="gemini-3.8-flash"):
-    return FakeGoogleResponse({
+
+
+def zai_response(text, model="glm-5.3"):
+    return FakeHTTPResponse({
         "model": model,
         "choices": [{"message": {"content": text}, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 500, "completion_tokens": 100},
+        "usage": {"prompt_tokens": 500, "completion_tokens": 100,
+                  "prompt_tokens_details": {"cached_tokens": 200}},
     })
 
 
-def test_default_config_selects_good_free_tier_models():
+def test_default_config_assigns_glm_models_by_task_fit():
     settings = config.load_settings()
 
-    assert settings.provider == "google"
-    assert settings.role("diagnoser").model == "gemini-3.8-flash"
-    assert settings.role("fixer").model == "gemini-3.8-flash"
-    assert settings.role("judge").model == "gemini-3.1-flash-lite"
+    assert settings.provider == "zai"
+    # the flagship reasons, a cheaper coding model patches, and the judge differs from both
+    # only ids this plan actually serves: anything else is silently aliased by the provider
+    real = {"glm-5.3", "glm-5.3-flash"}
+    assert {settings.role(r).model for r in ("manager", "diagnoser", "fixer", "judge")} <= real
+    assert settings.role("diagnoser").model == "glm-5.3"
+    assert settings.role("fixer").model == "glm-5.3"
+    assert settings.role("judge").model not in {settings.role("diagnoser").model,
+                                                settings.role("fixer").model}
+    # both served models force thinking, so `effort` is the only cost lever and must be set
+    assert all(settings.role(r).effort for r in ("manager", "diagnoser", "fixer", "judge"))
 
 
-def test_google_structured_request_uses_free_provider_and_json_schema(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "test-not-used")
+def test_zai_structured_request_shape(monkeypatch):
+    monkeypatch.setenv("ZAI_API_KEY", "test-not-used")
     rows = []
-    llm = GoogleLLM(config.load_settings(), telemetry=rows.append)
-    llm.client = FakeGoogleClient([google_response(json.dumps(GOOD_STEP))])
+    llm = ZaiLLM(config.load_settings(), telemetry=rows.append)
+    llm.client = FakeHTTPClient([zai_response(json.dumps(GOOD_STEP))])
     res = llm.structured(
         role="diagnoser",
         system="system prompt",
@@ -179,27 +189,101 @@ def test_google_structured_request_uses_free_provider_and_json_schema(monkeypatc
             {"type": "text", "text": "previous response"},
         ]}],
         schema=ReActStep,
-        task_id="google-1",
+        task_id="zai-1",
     )
 
     url, call = llm.client.calls[0]
     payload = call["json"]
-    assert url == GoogleLLM.endpoint
-    assert payload["model"] == "gemini-3.8-flash"
+    assert url == "https://api.z.ai/api/paas/v4/chat/completions"
+    assert payload["model"] == "glm-5.3"
     assert payload["reasoning_effort"] == "high"
+    assert payload["thinking"] == {"type": "enabled"}
+    # Z.AI accepts json_object but not a JSON Schema, so the schema rides in the system prompt
     assert payload["response_format"] == {"type": "json_object"}
     assert payload["messages"][0]["role"] == "system"
     assert "JSON Schema" in payload["messages"][0]["content"]
     assert payload["messages"][2] == {"role": "assistant", "content": "previous response"}
     assert res.parsed.action == "read_file"
-    assert res.cost_usd == 0
-    assert rows[0]["model"] == "gemini-3.8-flash"
+    assert rows[0]["model"] == "glm-5.3"
 
 
-def test_google_structured_output_repairs_invalid_json(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "test-not-used")
-    llm = GoogleLLM(config.load_settings())
-    llm.client = FakeGoogleClient([google_response("not json"), google_response(json.dumps(GOOD_STEP))])
+def test_zai_costs_the_paid_rate_including_cached_input(monkeypatch):
+    """Gemini's free tier made every run $0.00; GLM is billed, so cost telemetry must be real."""
+    monkeypatch.setenv("ZAI_API_KEY", "test-not-used")
+    llm = ZaiLLM(config.load_settings())
+    llm.client = FakeHTTPClient([zai_response(json.dumps(GOOD_STEP))])
+
+    res = llm.structured(role="diagnoser", system="s", messages=[], schema=ReActStep)
+
+    # glm-5.3: $1.40 input / $4.40 output / $0.26 cached-read per 1M
+    assert res.cost_usd == pytest.approx((500 * 1.40 + 100 * 4.40 + 200 * 0.26) / 1e6)
+    assert res.cost_usd > 0
+
+
+def test_manager_routing_buys_the_cheapest_reasoning(monkeypatch):
+    monkeypatch.setenv("ZAI_API_KEY", "test-not-used")
+    llm = ZaiLLM(config.load_settings())
+    llm.client = FakeHTTPClient([zai_response(json.dumps(GOOD_STEP), model="glm-5.3-flash")])
+
+    llm.structured(role="manager", system="s", messages=[], schema=ReActStep)
+
+    payload = llm.client.calls[0][1]["json"]
+    assert payload["model"] == "glm-5.3-flash"
+    assert payload["reasoning_effort"] == "low"
+
+
+def test_flash_is_priced_as_flash_not_as_the_flagship(monkeypatch):
+    """cost_usd prefix-matches unknown models, and glm-5.3-flash starts with glm-5.3 -- without
+    its own pricing row every flash call would be billed ~9x too high."""
+    monkeypatch.setenv("ZAI_API_KEY", "test-not-used")
+    llm = ZaiLLM(config.load_settings())
+    llm.client = FakeHTTPClient([zai_response(json.dumps(GOOD_STEP), model="glm-5.3-flash")])
+
+    res = llm.structured(role="judge", system="s", messages=[], schema=ReActStep)
+
+    # glm-5.3-flash: $0.15 input / $0.50 output / $0.03 cached-read per 1M
+    assert res.cost_usd == pytest.approx((500 * 0.15 + 100 * 0.50 + 200 * 0.03) / 1e6)
+
+
+def test_server_side_model_aliasing_is_reported(monkeypatch, capsys):
+    """The provider may serve a different model than asked for; that must never pass silently."""
+    monkeypatch.setenv("ZAI_API_KEY", "test-not-used")
+    llm = ZaiLLM(config.load_settings())
+    llm._alias_warned = set()
+    llm.client = FakeHTTPClient([zai_response(json.dumps(GOOD_STEP), model="glm-5.3-flash")])
+
+    llm.structured(role="diagnoser", system="s", messages=[], schema=ReActStep)
+
+    err = capsys.readouterr().err
+    assert "glm-5.3" in err and "glm-5.3-flash" in err
+
+
+def test_effort_is_normalized_to_what_each_model_accepts():
+    # glm-5.3 accepts only low/high/max: "medium" must not be sent verbatim
+    assert ZaiLLM.normalize_effort("glm-5.3", "medium") in ("low", "high")
+    assert ZaiLLM.normalize_effort("glm-5.3", "high") == "high"
+    assert ZaiLLM.normalize_effort("glm-5.3", "xhigh") == "max"
+    # a model with no restriction passes through untouched
+    assert ZaiLLM.normalize_effort("glm-4.7", "medium") == "medium"
+
+
+def test_forced_thinking_model_is_never_asked_to_disable_it(monkeypatch):
+    """GLM-5.3 thinks unconditionally; sending thinking=disabled would be rejected."""
+    monkeypatch.setenv("ZAI_API_KEY", "test-not-used")
+    s = config.load_settings()
+    s.roles["diagnoser"].thinking = False
+    llm = ZaiLLM(s)
+    llm.client = FakeHTTPClient([zai_response(json.dumps(GOOD_STEP))])
+
+    llm.structured(role="diagnoser", system="s", messages=[], schema=ReActStep)
+
+    assert llm.client.calls[0][1]["json"]["thinking"] == {"type": "enabled"}
+
+
+def test_zai_structured_output_repairs_invalid_json(monkeypatch):
+    monkeypatch.setenv("ZAI_API_KEY", "test-not-used")
+    llm = ZaiLLM(config.load_settings())
+    llm.client = FakeHTTPClient([zai_response("not json"), zai_response(json.dumps(GOOD_STEP))])
 
     result = llm.structured(role="fixer", system="s", messages=[{"role": "user", "content": "x"}],
                             schema=ReActStep)
@@ -209,18 +293,32 @@ def test_google_structured_output_repairs_invalid_json(monkeypatch):
     assert llm.client.calls[1][1]["json"]["messages"][-1]["role"] == "user"
 
 
-def test_google_api_error_is_reported(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "test-not-used")
-    llm = GoogleLLM(config.load_settings())
-    llm.client = FakeGoogleClient([FakeGoogleResponse({"error": {"message": "bad API key"}}, 401)])
+def test_zai_api_error_is_reported(monkeypatch):
+    monkeypatch.setenv("ZAI_API_KEY", "test-not-used")
+    llm = ZaiLLM(config.load_settings())
+    llm.client = FakeHTTPClient([FakeHTTPResponse({"error": {"message": "bad API key"}}, 401)])
 
     with pytest.raises(LLMError, match="API error 401: bad API key"):
         llm.structured(role="diagnoser", system="s", messages=[], schema=ReActStep)
 
 
-def test_make_llm_requires_google_key_for_default_provider(monkeypatch):
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+def test_zai_flags_a_sensitive_finish_reason_as_a_refusal(monkeypatch):
+    monkeypatch.setenv("ZAI_API_KEY", "test-not-used")
+    llm = ZaiLLM(config.load_settings())
+    blocked = FakeHTTPResponse({
+        "model": "glm-5.3",
+        "choices": [{"message": {"content": ""}, "finish_reason": "sensitive"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 0},
+    })
+    llm.client = FakeHTTPClient([blocked])
 
-    with pytest.raises(LLMError, match="GEMINI_API_KEY is not set"):
+    with pytest.raises(LLMRefusal):
+        llm.structured(role="diagnoser", system="s", messages=[], schema=ReActStep)
+
+
+def test_make_llm_requires_a_zai_key_for_the_default_provider(monkeypatch):
+    monkeypatch.delenv("ZAI_API_KEY", raising=False)
+    monkeypatch.delenv("GLM_API_KEY", raising=False)
+
+    with pytest.raises(LLMError, match="ZAI_API_KEY is not set"):
         make_llm("live", config.load_settings())

@@ -35,13 +35,16 @@ pip install -e ".[dev]"
 copy .env.example .env
 ```
 
-Create a free Gemini API key in [Google AI Studio](https://aistudio.google.com/apikey), put it in
-`.env` as `GEMINI_API_KEY`, then:
+Create an API key at [Z.AI](https://z.ai) and put it in `.env` as `ZAI_API_KEY`, then:
 
-The free tier has rate limits, and Google may use submitted content to improve its products.
-Do not send confidential repository code unless that use is acceptable. CodeFix cost telemetry
-assumes free-tier access and does not report charges from a paid Google project. To use Anthropic
-instead, set `provider: anthropic` in `config/models.yaml` and configure `ANTHROPIC_API_KEY`.
+**This is a paid API — every run below is billed.** Models are assigned per role by task fit
+(`config/models.yaml`): the flagship `glm-5.3` reasons in the Diagnoser, the cheaper `glm-4.7`
+writes patches, and the Manager runs with reasoning **disabled**, because routing between two or
+three legal transitions should not buy reasoning tokens. Cost telemetry uses Z.AI's published
+per-1M-token prices, so `runs.db` and every benchmark report carry a real dollar figure. To use
+Anthropic instead, set `provider: anthropic` in `config/models.yaml` and configure
+`ANTHROPIC_API_KEY`. Note that repository code is sent to the model provider; do not point this at
+a confidential repo unless that is acceptable.
 
 ```bash
 codefix demo py05-region-case
@@ -83,7 +86,7 @@ Open http://127.0.0.1:8000.
 
 | Decision | Default | Where |
 |---|---|---|
-| Models | Manager/Judge `gemini-3.1-flash-lite`, Diagnoser/Fixer `gemini-3.8-flash` (Google AI Studio free tier) | `config/models.yaml` |
+| Models (Z.AI GLM, paid) | Diagnoser `glm-5.3` (effort high) · Fixer `glm-4.7` · Manager `glm-4.6` (thinking off) · Judge `glm-4.6` | `config/models.yaml` |
 | Retry limit / ReAct cap | 3 Fixer attempts / 8 ReAct steps | `config/models.yaml` → `pipeline` |
 | Agent frameworks | Google ADK (orchestration, Manager, Diagnoser) + CrewAI (Fixer, Reviewer, Tester, PR), linked by A2A | `codefix/adk_side/`, `codefix/crew_side/` |
 | Prompt variant / persona | `react` / `default` | `config/models.yaml` → `pipeline`, or `--variant/--persona` |

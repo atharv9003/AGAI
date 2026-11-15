@@ -175,7 +175,7 @@ def _variant_extra(variant: str | None, persona: str | None) -> dict:
 @app.command()
 def demo(bug_id: str = typer.Argument("py05-region-case", help="Bug id from benchmarks/bugset/bugs.yaml"),
          arch: str = typer.Option("hierarchical", help=ARCH_HELP),
-         llm: str = typer.Option("live", help="live (Gemini API) | mock (offline oracle, shows a retry)"),
+         llm: str = typer.Option("live", help="live (Z.AI GLM API, billed) | mock (offline oracle, shows a retry)"),
          max_attempts: int | None = typer.Option(None),
          variant: str | None = typer.Option(None, help=VARIANT_HELP),
          persona: str | None = typer.Option(None, help=PERSONA_HELP)):

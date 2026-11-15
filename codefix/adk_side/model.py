@@ -1,7 +1,7 @@
 """`CodefixModel`: the Google ADK model adapter (an ADK `BaseLlm`).
 
 ADK agents talk to models through `BaseLlm.generate_content_async(LlmRequest) -> LlmResponse`.
-This adapter forwards each request to CodeFix's own LLM layer (`codefix.llm`: Gemini or Claude
+This adapter forwards each request to CodeFix's own LLM layer (`codefix.llm`: Z.AI GLM or Claude
 with per-call token/cost telemetry, or the offline mock), so the framework owns the agent loop,
 tool execution and callbacks while every model call stays measured the same way.
 

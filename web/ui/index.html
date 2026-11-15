@@ -41,7 +41,7 @@
         </div>
         <div>
           <label for="llm">LLM</label>
-          <select id="llm"><option value="live">live (Gemini API)</option><option value="mock">mock (offline oracle, seeded bugs)</option></select>
+          <select id="llm"><option value="live">live (Z.AI GLM, billed)</option><option value="mock">mock (offline oracle, seeded bugs)</option></select>
         </div>
       </div>
       <div class="row">
@@ -88,7 +88,7 @@ let cfg;
 (async () => {
   cfg = await api('/api/config');
   if (!cfg.has_api_key) {
-    $('#keyBanner').innerHTML = `<div class="banner warn">⚠ <b>No GEMINI_API_KEY set.</b> Live runs are disabled. Add it to <code>.env</code>, or pick a seeded bug with the <b>mock</b> LLM for an offline demo.</div>`;
+    $('#keyBanner').innerHTML = `<div class="banner warn">⚠ <b>No ZAI_API_KEY set.</b> Live runs are disabled. Add it to <code>.env</code>, or pick a seeded bug with the <b>mock</b> LLM for an offline demo.</div>`;
     $('#llm').value = 'mock';
   }
   for (const b of cfg.bugs) $('#seed').insertAdjacentHTML('beforeend', `<option value="${esc(b.id)}">${esc(b.id)} · ${esc(b.repo)} · ${esc(b.difficulty)}</option>`);
