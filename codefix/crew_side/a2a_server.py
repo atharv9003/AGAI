@@ -104,10 +104,38 @@ class CrewExecutor(AgentExecutor):
         raise NotImplementedError("CodeFix worker requests are not cancelable")
 
 
+class A2AAuthMiddleware:
+    """Shared-secret bearer auth for the JSON-RPC endpoint (CODEFIX_A2A_TOKEN).
+
+    The agent card stays public (A2A discovery); every message/send needs the token, so a
+    deployed CrewAI service cannot be driven by anyone who merely knows its URL.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        token = os.environ.get("CODEFIX_A2A_TOKEN")
+        if scope["type"] == "http" and token and scope.get("method") == "POST":
+            import hmac
+
+            got = dict(scope.get("headers") or []).get(b"authorization", b"").decode("latin-1")
+            if not hmac.compare_digest(got, f"Bearer {token}"):
+                from starlette.responses import JSONResponse
+
+                await JSONResponse({"error": "A2A: missing or invalid bearer token"}, status_code=401)(
+                    scope, receive, send)
+                return
+        await self.app(scope, receive, send)
+
+
 def build_app(url: str | None = None) -> Starlette:
+    from starlette.middleware import Middleware
+
     card = agent_card(url)
     handler = DefaultRequestHandler(agent_executor=CrewExecutor(), task_store=InMemoryTaskStore(), agent_card=card)
-    return Starlette(routes=[*create_agent_card_routes(card), *create_jsonrpc_routes(handler, "/")])
+    return Starlette(routes=[*create_agent_card_routes(card), *create_jsonrpc_routes(handler, "/")],
+                     middleware=[Middleware(A2AAuthMiddleware)])
 
 
 @lru_cache(maxsize=1)

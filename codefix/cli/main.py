@@ -218,6 +218,7 @@ def bench(arch: str = typer.Option("all", help="all | comma list of " + ARCH_HEL
           max_attempts: int | None = typer.Option(None),
           variants: str = typer.Option("react", help="Comma list of prompt variants: react,fewshot,react-reflect"),
           personas: str = typer.Option("default", help="Comma list of personas: default,senior,novice,security"),
+          reporters: str = typer.Option("developer", help="Comma list of user personas filing the report: developer,enduser"),
           verify_bugset: bool = typer.Option(False, "--verify-bugset", help="Only check every bug is reproducible")):
     """Benchmark architectures on the seeded bug set -> CSV + markdown report."""
     from codefix.eval.bugset import load_bugs, verify
@@ -242,7 +243,8 @@ def bench(arch: str = typer.Option("all", help="all | comma list of " + ARCH_HEL
         for p in ps:
             _variant_extra(v, p)
     out = run_bench(archs, runs=runs, bug_ids=bugs.split(",") if bugs else None, llm_mode=llm, judge=judge,
-                    max_attempts=max_attempts, variants=vs, personas=ps, progress=con.print)
+                    max_attempts=max_attempts, variants=vs, personas=ps, progress=con.print,
+                    reporters=[u.strip() for u in reporters.split(",")])
     con.print(Path(out["report"]).read_text(encoding="utf-8"))
 
 

@@ -27,10 +27,18 @@ from mcp_server.sandbox import rmtree
 BENCH_DIR = config.DATA_DIR / ".codefix" / "bench"
 RESULTS_DIR = config.ROOT / "benchmarks" / "results"
 
+# User personas (who files the bug report) - a dimension of the experimental design, distinct from
+# the agent personas in codefix/prompts.py (how the agents are prompted).
+REPORTERS: dict[str, dict] = {
+    "developer": {"trace": True, "prefix": ""},
+    "enduser": {"trace": False, "prefix": "Reported by a non-technical user of the app (no logs available): "},
+}
+
 
 def run_bench(archs: list[str], runs: int = 1, bug_ids: list[str] | None = None, llm_mode: str = "live",
               judge: bool = True, max_attempts: int | None = None, variants: list[str] | None = None,
-              personas: list[str] | None = None, progress: Callable[[str], None] = print) -> dict:
+              personas: list[str] | None = None, progress: Callable[[str], None] = print,
+              reporters: list[str] | None = None) -> dict:
     bench_id = f"bench-{dt.datetime.now():%Y%m%d-%H%M%S}" + ("-mock" if llm_mode == "mock" else "")
     bugs = load_bugs(bug_ids)
     bb = runner.blackboard()
@@ -41,19 +49,22 @@ def run_bench(archs: list[str], runs: int = 1, bug_ids: list[str] | None = None,
 
         judge_llm = make_llm(llm_mode, config.settings(), telemetry=runner._llm_sink(bb),
                              handler=mock_judge if llm_mode == "mock" else None)
-    variants, personas = variants or ["react"], personas or ["default"]
-    combos = [(a, v, p) for a in archs for v in variants for p in personas]
+    variants, personas, reporters = variants or ["react"], personas or ["default"], reporters or ["developer"]
+    bad = [r for r in reporters if r not in REPORTERS]
+    if bad:
+        raise ValueError(f"unknown reporter persona(s) {bad}; choose from {list(REPORTERS)}")
+    combos = [(a, v, p, u) for a in archs for v in variants for p in personas for u in reporters]
     total = len(bugs) * len(combos) * runs
     progress(f"{bench_id}: {len(bugs)} bugs x {len(archs)} archs x {len(variants)} variants x {len(personas)} "
-             f"personas x {runs} = {total} runs ({llm_mode})")
+             f"personas x {len(reporters)} reporters x {runs} = {total} runs ({llm_mode})")
     task_ids: list[str] = []
     i = 0
     for rep in range(runs):
         for bug in bugs:
-            for arch, variant, persona in combos:
+            for arch, variant, persona, reporter in combos:
                 i += 1
                 tid = _one(bench_id, bug, arch, rep, llm_mode, judge_llm, max_attempts, progress, i, total,
-                           variant, persona)
+                           variant, persona, reporter)
                 if tid:
                     task_ids.append(tid)
     out_dir = RESULTS_DIR / bench_id
@@ -65,25 +76,31 @@ def run_bench(archs: list[str], runs: int = 1, bug_ids: list[str] | None = None,
 
 
 def _one(bench_id: str, bug: Bug, arch: str, rep: int, llm_mode: str, judge_llm, max_attempts, progress,
-         i: int, total: int, variant: str = "react", persona: str = "default") -> str | None:
+         i: int, total: int, variant: str = "react", persona: str = "default",
+         reporter: str = "developer") -> str | None:
     # short suffix: Windows' 260-char path limit is close once git object paths are appended
     tag = "" if (variant, persona) == ("react", "default") else \
         f"-{ {'react': 'r', 'fewshot': 'f', 'react-reflect': 'rr'}.get(variant, variant)}{persona[:3]}"
+    tag += "" if reporter == "developer" else f"-{reporter[:3]}"
     work = BENCH_DIR / bench_id / f"{bug.id}-{arch}{tag}-r{rep}"
     repo = materialize(bug, work / "repo")
-    stack = trace_text(failing_output(bug, repo)) if bug.with_trace else ""
+    # user persona: a developer attaches the failing test output; an end user only describes symptoms
+    stack = trace_text(failing_output(bug, repo)) if bug.with_trace and REPORTERS[reporter]["trace"] else ""
+    report = REPORTERS[reporter]["prefix"] + bug.report
     started = time.time()
     tid = None
     try:
         snap = runner.run_pipeline(
-            bug.report, repo, arch=arch, llm_mode=llm_mode, stack_trace=stack, max_attempts=max_attempts,
+            report, repo, arch=arch, llm_mode=llm_mode, stack_trace=stack, max_attempts=max_attempts,
             mock_handler=OracleMock(bug) if llm_mode == "mock" else None,
             bench_id=bench_id, bug_id=bug.id,
-            extra={"difficulty": bug.difficulty, "rep": rep, "variant": variant, "persona": persona})
+            extra={"difficulty": bug.difficulty, "rep": rep, "variant": variant, "persona": persona,
+                   "reporter": reporter})
         tid = snap["run"]["task_id"]
         ev = judge_run(judge_llm, runner.blackboard(), tid, bug, sandbox=work / "judge") if judge_llm else None
         r = runner.blackboard().get_run(tid)
-        progress(f"[{i}/{total}] {bug.id:<32} {arch:<12} {variant:<13} {persona:<8} {r['outcome']:<9} attempts={r['attempts']} "
+        progress(f"[{i}/{total}] {bug.id:<28} {arch:<12} {variant:<13} {persona:<8} {reporter:<9} "
+                 f"{r['outcome']:<9} attempts={r['attempts']} "
                  f"{int(time.time() - started)}s ${r['cost_usd']:.3f}"
                  + (f" judge={ev['verdict']} tests={'green' if ev['objective_pass'] else 'red'}" if ev else ""))
         return tid
@@ -103,6 +120,7 @@ SELECT r.bench_id, r.task_id, r.bug_id, r.arch, r.llm_mode, r.outcome, r.failure
        json_extract(r.meta, '$.difficulty') AS difficulty,
        COALESCE(json_extract(r.meta, '$.variant'), 'react') AS variant,
        COALESCE(json_extract(r.meta, '$.persona'), 'default') AS persona,
+       COALESCE(json_extract(r.meta, '$.reporter'), 'developer') AS reporter,
        (SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls l WHERE l.task_id=r.task_id AND l.agent<>'judge') AS pipeline_cost_usd,
        (SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls l WHERE l.task_id=r.task_id AND l.agent='judge') AS judge_cost_usd,
        (SELECT COUNT(*) FROM llm_calls l WHERE l.task_id=r.task_id AND l.agent<>'judge') AS llm_calls,
@@ -116,7 +134,9 @@ SELECT r.bench_id, r.task_id, r.bug_id, r.arch, r.llm_mode, r.outcome, r.failure
        (SELECT COALESCE(SUM(latency_ms),0) FROM messages m WHERE m.task_id=r.task_id AND m.sender='tester' AND m.status IN ('success','failure')) AS tester_ms,
        (SELECT COALESCE(SUM(latency_ms),0) FROM llm_calls l WHERE l.task_id=r.task_id AND l.agent='manager') AS manager_ms,
        (SELECT AVG(LENGTH(payload)) FROM messages m WHERE m.task_id=r.task_id) AS avg_msg_bytes,
-       e.verdict AS judge_verdict, e.score AS judge_score, e.objective_pass, e.target_test_pass, e.agreement
+       (SELECT COALESCE(SUM(latency_ms),0) FROM messages m WHERE m.task_id=r.task_id AND m.sender='pr' AND m.status IN ('success','failure')) AS pr_ms,
+       e.verdict AS judge_verdict, e.score AS judge_score, e.objective_pass, e.target_test_pass, e.agreement,
+       e.ref_exact, e.ref_similarity, e.ref_file_match
 FROM runs r LEFT JOIN evaluations e ON e.task_id = r.task_id
 WHERE r.bench_id = ? ORDER BY r.created_at
 """

@@ -64,8 +64,8 @@ let snap = null, selectedAttempt = null, pinnedAttempt = false, refreshTimer = n
 
 // ---------------------------------------------------------------- pipeline diagram
 const POS = { manager: [380, 40], diagnoser: [100, 160], fixer: [290, 160], tester: [480, 160], pr: [660, 160], human: [660, 40] };
-const LABEL = { manager: ['Manager', 'routing · haiku'], diagnoser: ['Diagnoser', 'ReAct · opus'], fixer: ['Fixer', 'patch · sonnet'],
-                tester: ['Tester', 'lint + tests'], pr: ['PR agent', 'codefix/&lt;id&gt;'], human: ['Human', 'confirm / escalation'] };
+const LABEL = { manager: ['Manager', 'ADK · routing'], diagnoser: ['Diagnoser', 'ADK · ReAct'], fixer: ['Fixer', 'CrewAI · patch (A2A)'],
+                tester: ['Tester', 'CrewAI · lint + tests'], pr: ['PR agent', 'CrewAI · codefix/&lt;id&gt;'], human: ['Human', 'confirm / escalation'] };
 const EDGES = {
   hierarchical: [['manager','diagnoser'],['manager','fixer'],['manager','tester'],['manager','pr'],['manager','human'],['pr','human']],
   sequential: [['diagnoser','fixer'],['fixer','tester'],['tester','pr'],['pr','human'],['tester','diagnoser']],

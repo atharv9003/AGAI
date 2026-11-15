@@ -108,6 +108,9 @@ CREATE TABLE IF NOT EXISTS evaluations (
     target_test_pass INTEGER,
     agreement INTEGER,
     cost_usd REAL DEFAULT 0,
+    ref_exact INTEGER,
+    ref_similarity REAL,
+    ref_file_match INTEGER,
     timestamp TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ix_messages_task ON messages(task_id, id);
@@ -146,6 +149,11 @@ class Blackboard:
         self._wlock = threading.RLock()
         with self._conn() as c:
             c.executescript(SCHEMA)
+            # additive migrations for databases created by earlier versions
+            have = {r[1] for r in c.execute("PRAGMA table_info(evaluations)")}
+            for col, typ in (("ref_exact", "INTEGER"), ("ref_similarity", "REAL"), ("ref_file_match", "INTEGER")):
+                if col not in have:
+                    c.execute(f"ALTER TABLE evaluations ADD COLUMN {col} {typ}")
 
     # ------------------------------------------------------------------ plumbing
     @contextmanager

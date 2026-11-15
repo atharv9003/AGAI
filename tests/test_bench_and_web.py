@@ -43,8 +43,24 @@ def test_objective_check_detects_bad_patch(isolated):
     repo = materialize(bug, isolated / "repo")
     good = objective_check(repo, isolated / "sb", known_fix_diff(bug, repo), bug, "ok1")
     assert good["objective_pass"] and good["target_test_pass"]
+    # reference-text evaluation: the known-good fix matches the reference exactly
+    assert good["ref_exact"] == 1 and good["ref_similarity"] == 1.0 and good["ref_file_match"] == 1
     bad = objective_check(repo, isolated / "sb", "", bug, "bad1")
-    assert not bad["objective_pass"]
+    assert not bad["objective_pass"] and bad["ref_exact"] == 0 and bad["ref_similarity"] == 0.0
+
+
+def test_a2a_bearer_token_required(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from codefix.crew_side.a2a_server import build_app
+
+    monkeypatch.setenv("CODEFIX_A2A_TOKEN", "s3cret")
+    c = TestClient(build_app("http://x/"))
+    assert c.get("/.well-known/agent-card.json").status_code == 200  # discovery stays public
+    assert c.post("/", json={"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": {}}).status_code == 401
+    ok = c.post("/", json={"jsonrpc": "2.0", "id": 1, "method": "SendMessage", "params": {}},
+                headers={"Authorization": "Bearer s3cret"})
+    assert ok.status_code != 401
 
 
 def test_web_api_flow():

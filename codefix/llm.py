@@ -241,7 +241,27 @@ class GoogleLLM(BaseLLM):
         }
         if rc.effort:
             payload["reasoning_effort"] = rc.effort
-        return self.client.post(self.endpoint, json=payload)
+        return self._post_with_backoff(payload)
+
+    # Free-tier quotas are per minute: a 429 / 5xx is retried with backoff (honouring the
+    # server's "retry in Ns" hint) instead of failing the run. Daily-quota errors are not retried.
+    RETRY_STATUS = {429, 500, 502, 503, 504}
+    MAX_RETRIES = int(os.environ.get("CODEFIX_LLM_MAX_RETRIES", "6"))
+
+    def _post_with_backoff(self, payload: dict) -> Any:
+        delay = 4.0
+        for attempt in range(self.MAX_RETRIES + 1):
+            resp = self.client.post(self.endpoint, json=payload)
+            if resp.status_code not in self.RETRY_STATUS or attempt == self.MAX_RETRIES:
+                return resp
+            text = resp.text[:2000]
+            if resp.status_code == 429 and re.search(r"per ?day|PerDay|daily", text, re.I):
+                return resp  # daily quota exhausted: waiting minutes will not help
+            hint = re.search(r"retry(?:Delay)?[^0-9]{0,20}(\d+(?:\.\d+)?)\s*s", text, re.I)
+            wait = min(90.0, float(hint.group(1)) + 1.0 if hint else delay)
+            time.sleep(wait)
+            delay = min(60.0, delay * 2)
+        return resp  # pragma: no cover
 
     def structured(self, *, role: str, system: str, messages: list[dict], schema: type[BaseModel],
                    task_id: str | None = None, agent: str | None = None) -> LLMResult:

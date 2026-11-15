@@ -30,8 +30,15 @@ class A2AError(RuntimeError):
     pass
 
 
+def auth_headers() -> dict[str, str]:
+    """Shared-secret bearer token for the A2A service (set CODEFIX_A2A_TOKEN on both sides)."""
+    token = os.environ.get("CODEFIX_A2A_TOKEN")
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 async def call_crew(ctx: RunContext, skill: str, payload: dict) -> dict:
-    url = os.environ.get("CODEFIX_CREW_A2A_URL")
+    # mock runs carry an in-memory oracle that a separate process cannot rebuild: keep them in-process
+    url = os.environ.get("CODEFIX_CREW_A2A_URL") if getattr(ctx.llm, "mode", "live") != "mock" else None
     msg = new_message([new_data_part({"skill": skill, "task_id": ctx.task_id, "payload": payload})],
                       role=Role.ROLE_USER, context_id=ctx.task_id)
     msg.message_id = f"{ctx.task_id}-{skill}-{uuid.uuid4().hex[:8]}"
@@ -39,14 +46,14 @@ async def call_crew(ctx: RunContext, skill: str, payload: dict) -> dict:
               transport="http" if url else "in-process", bytes=len(msg.SerializeToString()))
     started = time.time()
     if url:
-        http = httpx.AsyncClient(timeout=TIMEOUT_S)
+        http = httpx.AsyncClient(timeout=TIMEOUT_S, headers=auth_headers())
         factory = ClientFactory(ClientConfig(httpx_client=http, streaming=False))
         client = await factory.create_from_url(url)
     else:
         from codefix.crew_side.a2a_server import LOCAL_URL, agent_card, local_app
 
         http = httpx.AsyncClient(transport=httpx.ASGITransport(app=local_app()), base_url=LOCAL_URL,
-                                 timeout=TIMEOUT_S)
+                                 timeout=TIMEOUT_S, headers=auth_headers())
         client = ClientFactory(ClientConfig(httpx_client=http, streaming=False)).create(agent_card(LOCAL_URL))
     body: dict = {}
     try:

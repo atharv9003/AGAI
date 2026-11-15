@@ -22,8 +22,10 @@ def _pct(n: int, d: int) -> str:
 
 
 def labeler(rows: list[dict]):
-    varied = [k for k in ("arch", "variant", "persona") if len({r.get(k) or "" for r in rows}) > 1] or ["arch"]
-    return lambda r: "·".join(str(r.get(k) or ("react" if k == "variant" else "default")) for k in varied)
+    dflt = {"variant": "react", "reporter": "developer"}
+    varied = [k for k in ("arch", "variant", "persona", "reporter")
+              if len({r.get(k) or dflt.get(k, "default") for r in rows}) > 1] or ["arch"]
+    return lambda r: "·".join(str(r.get(k) or dflt.get(k, "default")) for k in varied)
 
 
 def summarize(rows: list[dict], key=None) -> dict[str, dict]:
@@ -56,6 +58,12 @@ def summarize(rows: list[dict], key=None) -> dict[str, dict]:
             "fixer_s": _mean([r["fixer_ms"] / 1000 for r in rs]),
             "tester_s": _mean([r["tester_ms"] / 1000 for r in rs]),
             "manager_s": _mean([r["manager_ms"] / 1000 for r in rs]),
+            "pr_s": _mean([(r.get("pr_ms") or 0) / 1000 for r in rs]),
+            "ref_exact": sum(1 for r in rs if r.get("ref_exact")),
+            "ref_sim": _mean([r.get("ref_similarity") for r in rs]),
+            "ref_file": sum(1 for r in rs if r.get("ref_file_match")),
+            "duration_sd": st.pstdev([r["duration_ms"] / 1000 for r in rs if r["duration_ms"]])
+            if len([r for r in rs if r["duration_ms"]]) > 1 else 0.0,
             "llm_calls": _mean([r["llm_calls"] for r in rs]),
             "tokens": _mean([r["tokens"] for r in rs]),
             "msg_bytes": _mean([r["avg_msg_bytes"] for r in rs]),
@@ -94,7 +102,11 @@ def write_report(bench_id: str, path: Path, rows: list[dict] | None = None) -> P
     row("Runs needing a retry", lambda v: str(v["retried"]))
     row("Escalated to human", lambda v: str(v["escalated"]))
     row("Errors", lambda v: str(v["errors"]))
+    row("Reference fix: exact match", lambda v: f"{v['ref_exact']}/{v['n']} ({_pct(v['ref_exact'], v['n'])})")
+    row("Reference fix: edit similarity (0-1)", lambda v: f"{v['ref_sim']:.2f}")
+    row("Reference fix: same file(s) changed", lambda v: f"{v['ref_file']}/{v['n']}")
     row("Mean wall-clock / run", lambda v: f"{v['duration_s']:.1f}s")
+    row("Wall-clock std-dev", lambda v: f"{v['duration_sd']:.1f}s")
     row("Mean pipeline cost / run", lambda v: f"${v['cost']:.4f}")
     row("Total pipeline cost", lambda v: f"${v['cost_total']:.3f}")
     row("Mean LLM calls / run", lambda v: f"{v['llm_calls']:.1f}")
@@ -104,8 +116,9 @@ def write_report(bench_id: str, path: Path, rows: list[dict] | None = None) -> P
     lines.append("\n## Per-agent mean latency (seconds per run)\n")
     lines.append("| Agent | " + " | ".join(s) + " |")
     lines.append("|---|" + "---|" * len(s))
-    for agent in ("diagnoser", "fixer", "tester", "manager"):
-        row(agent.capitalize() if agent != "manager" else "Manager (LLM time)", lambda v, a=agent: f"{v[a + '_s']:.1f}")
+    for agent in ("diagnoser", "fixer", "tester", "pr", "manager"):
+        name = {"manager": "Manager (LLM time)", "pr": "PR agent"}.get(agent, agent.capitalize())
+        row(name, lambda v, a=agent: f"{v[a + '_s']:.1f}")
     bottleneck = {a: max(("diagnoser", "fixer", "tester", "manager"), key=lambda k: v[k + "_s"]) for a, v in s.items()}
     lines.append("\nBottleneck agent per architecture: " + ", ".join(f"**{a}** → {b}" for a, b in bottleneck.items()))
 
