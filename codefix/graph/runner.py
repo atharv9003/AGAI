@@ -170,16 +170,21 @@ def resolve_pr(task_id: str, confirmed: bool) -> dict:
 
 
 def export_graph_images(out_dir: Path) -> dict[str, str]:
-    """docs/graph.png (hierarchical) + graph_<arch>.png from the Mermaid source of each architecture."""
+    """Every diagram in docs/: the three architectures plus MCP, messaging and deployment.
+
+    `graph.png` is the hierarchical architecture (the default), `graph_<arch>.png` the other two,
+    and `graph_<name>.png` the cross-cutting diagrams from `codefix.diagrams`.
+    """
     import base64
 
     import httpx
 
     from codefix.adk_side.pipelines import MERMAID
+    from codefix.diagrams import DIAGRAMS
 
     out_dir.mkdir(parents=True, exist_ok=True)
     written = {}
-    for arch, src in MERMAID.items():
+    for arch, src in {**MERMAID, **DIAGRAMS}.items():
         (out_dir / f"graph_{arch}.mmd").write_text(src, encoding="utf-8")
         name = "graph.png" if arch == "hierarchical" else f"graph_{arch}.png"
         try:

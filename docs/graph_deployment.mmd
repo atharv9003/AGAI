@@ -1,0 +1,27 @@
+flowchart LR
+    U(["developer's<br/>browser"]) -->|HTTPS| W
+    subgraph GCP["Google Cloud - project &lt;gcp-project&gt;"]
+      direction LR
+      subgraph CR["Cloud Run: codefix-ai (asia-south1, 2 vCPU / 4Gi)"]
+        direction LR
+        subgraph CT["one container - Dockerfile, built by Cloud Build"]
+          direction TB
+          W["FastAPI web app<br/>/ · /api/* · run view · dashboard"]
+          A["ADK orchestration<br/>Manager + Diagnoser"]
+          X["CrewAI A2A service at /a2a/crew/<br/>card: /.well-known/agent-card.json"]
+          MS["MCP tool server<br/>stdio subprocess"]
+          W --> A
+          A -->|"A2A JSON-RPC<br/>+ bearer token"| X
+          A --> MS
+          X --> MS
+        end
+      end
+      SM[("Secret Manager<br/>gemini-api-key")]
+      AR[("Artifact Registry<br/>container image")]
+    end
+    SM -->|"mounted as GEMINI_API_KEY,<br/>never baked into the image"| CT
+    AR -->|"deployed revision"| CR
+    A -->|HTTPS| G["Google AI Studio<br/>Gemini API"]
+    X -->|HTTPS| G
+    MS -->|"git push / REST"| GH["GitHub<br/>pull request,<br/>after human approval"]
+    MS -.->|"runs.db + traces in /tmp:<br/>not durable across restarts"| NOTE["ephemeral<br/>run storage"]

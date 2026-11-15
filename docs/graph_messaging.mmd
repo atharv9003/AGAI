@@ -1,0 +1,18 @@
+flowchart LR
+    subgraph ADKS["ADK service - orchestration"]
+      direction TB
+      M["Manager<br/>ADK custom agent"]
+      D["Diagnoser<br/>ADK LlmAgent"]
+    end
+    subgraph CREWS["CrewAI service - workers (separate A2A service)<br/>auth: bearer CODEFIX_A2A_TOKEN"]
+      direction TB
+      F["Fixer + Reviewer"]
+      T["Tester"]
+      P["PR agent"]
+    end
+    BB[("<b>Blackboard</b> - shared state<br/>SQLite runs.db<br/><br/>typed Pydantic Envelopes<br/>append-only message log<br/>dispatches carry artifact_refs,<br/>never artifact bodies")]
+    M -->|"A2A: fix / test / pr_prepare<br/>JSON-RPC, bearer token"| CREWS
+    CREWS -->|"A2A reply: result ids only"| M
+    D -->|"A2A: p2p_repair<br/>(p2p architecture only)"| F
+    ADKS <==>|"read / write state"| BB
+    CREWS <==>|"write Patch / TestReport / PRResult"| BB

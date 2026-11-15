@@ -1,0 +1,22 @@
+flowchart LR
+    subgraph ADK["Google ADK"]
+      DG["Diagnoser<br/>LlmAgent (ReAct)"]
+    end
+    subgraph CREW["CrewAI"]
+      FX["Fixer<br/>Agent + Task"]
+      TS["Tester<br/>Flow step"]
+      PR["PR agent<br/>Flow step"]
+    end
+    DG -->|"MCP tools wrapped as<br/>ADK BaseTool (adk_side/tools.py)"| GB
+    FX --> GB
+    TS --> GB
+    PR --> GB
+    GB{{"guardrails<br/>before_tool: per-agent allow-list + arg shape<br/>after_tool: Pydantic type check + untrusted-content wrap"}}
+    GB -->|"JSON-RPC over stdio"| S["MCP server (FastMCP)<br/>mcp_server/server.py - 16 tools"]
+    S --> T1["read_file · list_tree · code_search<br/>parse_stacktrace · static_analysis"]
+    S --> T2["rag_retrieve · index_repo · record_fix<br/>(ChromaDB + all-MiniLM-L6-v2)"]
+    S --> T3["create_workspace · discard_workspace<br/>apply_patch · diff_workspace · run_tests"]
+    S --> T4["git_branch · git_commit<br/>open_pull_request (needs confirmed=true)"]
+    T1 --> SBX["sandbox: repo-root path jail,<br/>secrets blocklist, subprocess timeouts"]
+    T3 --> SBX
+    T4 --> SBX

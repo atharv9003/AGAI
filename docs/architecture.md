@@ -107,6 +107,8 @@ same size as the first, while the P2P hand-off carries the full TestReport inlin
 
 ### MCP tools (`mcp_server/`, FastMCP over stdio)
 
+![agent-tool communication through MCP](graph_mcp.png)
+
 | Tool | Notes |
 |---|---|
 | `code_search(query, k)` | hybrid: ripgrep literal + vector search over AST chunks, reciprocal-rank fusion |
@@ -123,6 +125,8 @@ server's own JSON schema (`codefix/adk_side/tools.py`). Safety (path sandbox, bl
 timeouts, PR guard) lives in the server, so no agent in either framework can bypass it.
 
 ## 4. A2A: ADK ⇄ CrewAI interoperability
+
+![messaging: Blackboard shared state within ADK, A2A between frameworks](graph_messaging.png)
 
 The CrewAI worker agents are published as an **A2A agent** (`codefix/crew_side/a2a_server.py`,
 official `a2a-sdk`, JSON-RPC binding) with skills `fix`, `test`, `pr_prepare`, `p2p_repair`
@@ -223,6 +227,8 @@ variant and persona comparisons, and a **cost & running-time estimate** (total t
 billed cost, and what the same volume would cost at paid list prices).
 
 ## 9. Deployment (Google Cloud Run)
+
+![deployment on Google Cloud Run](graph_deployment.png)
 
 One container (`Dockerfile`): FastAPI web app + ADK orchestration + CrewAI A2A service
 (`/a2a/crew/`) + MCP tool server subprocess, with the embedding model baked in.
