@@ -1,15 +1,24 @@
-# never ship secrets or local state into the image
-.env
-.env.*
-.venv/
-.git/
-.codefix/
-traces/
-runs.db*
-checkpoints.db*
+# Keep in step with .gcloudignore. Patterns are anchored at the build-context root with a
+# leading slash wherever they are meant to mean "the repo's own X", so that the sample repos
+# under benchmarks/bugset/repos/ keep their tests/ directories (the Tester agent runs them)
+# and benchmarks/seed/ keeps the demo runs it ships to the deployed dashboard.
+
+# secrets and local state (root only)
+/.env
+/.env.*
+/.venv/
+/.git/
+/.codefix/
+/traces/
+/runs.db*
+/checkpoints.db*
+/.pytest_cache/
+/.ruff_cache/
+
+# our own test suite — NOT the sample repos' tests under benchmarks/bugset/repos/
+/tests/
+
+# caches, at any level
 **/__pycache__/
 *.pyc
-.pytest_cache/
-.ruff_cache/
 *.egg-info/
-tests/

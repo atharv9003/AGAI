@@ -1,16 +1,30 @@
-# gcloud uploads the build context from here (same rules as .dockerignore)
-# never ship secrets or local state into the image
-.env
-.env.*
-.venv/
-.git/
-.codefix/
-traces/
-runs.db*
-checkpoints.db*
+# gcloud uploads the build context from here. These are GITIGNORE semantics: a pattern without
+# a leading slash matches at EVERY directory level, not just the repo root.
+#
+# That bit us. A bare `tests/` also excluded benchmarks/bugset/repos/pyshop/tests/ — the sample
+# repo's own suite, which the Tester agent is supposed to run — so every Python bug came back
+# "0 tests" on the deployed service. The JS repo survived only because its directory is named
+# `test/`, singular. Likewise a bare `runs.db*` / `traces/` excluded benchmarks/seed/, the demo
+# runs that keep a cold instance's dashboard from being empty.
+#
+# So: anchor anything that is meant to mean "at the repo root only" with a leading slash.
+
+# secrets and local state (root only)
+/.env
+/.env.*
+/.venv/
+/.git/
+/.codefix/
+/traces/
+/runs.db*
+/checkpoints.db*
+/.pytest_cache/
+/.ruff_cache/
+
+# our own test suite — NOT the sample repos' tests under benchmarks/bugset/repos/
+/tests/
+
+# caches, at any level
 **/__pycache__/
 *.pyc
-.pytest_cache/
-.ruff_cache/
 *.egg-info/
-tests/
