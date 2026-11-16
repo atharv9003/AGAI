@@ -18,7 +18,6 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from docx import Document
-from docx.enum.section import WD_SECTION
 from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
 from docx.oxml import OxmlElement
@@ -258,7 +257,7 @@ def main() -> None:
     ap.add_argument("--pdf", action="store_true", help="also export a PDF via Word")
     args = ap.parse_args()
 
-    from content import build          # noqa: PLC0415  (local module, after sys.path fix)
+    from content import build  # noqa: PLC0415  (local module, after sys.path fix)
 
     rows = bench_rows()
     doc = Document()

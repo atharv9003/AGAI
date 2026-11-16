@@ -10,3 +10,6 @@ traces/
 .ruff_cache/
 *.egg-info/
 .codefix-junit.xml
+
+# generated report artifacts (rebuild with docs/report/build_report.py)
+bench_*.log

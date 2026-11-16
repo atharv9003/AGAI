@@ -377,8 +377,19 @@ def recost(apply: bool = typer.Option(False, "--apply", help="Write the correcte
             after += new
             if abs(new - (r["cost_usd"] or 0)) > 1e-9 or (migrate and inp != (r["input_tokens"] or 0)):
                 changes.append((inp, new, r["id"]))
-        if apply and changes:
-            db.executemany("UPDATE llm_calls SET input_tokens=?, cost_usd=? WHERE id=?", changes)
+        # runs.cost_usd is a running total incremented per call (Blackboard.record_llm_call),
+        # so correcting llm_calls alone leaves the per-run figure - the one the dashboard and
+        # the benchmark report show - stale. Rebuild it from its calls.
+        run_delta = db.execute(
+            "SELECT COUNT(*) FROM runs r WHERE ABS(COALESCE(r.cost_usd,0) -"
+            " (SELECT COALESCE(SUM(l.cost_usd),0) FROM llm_calls l WHERE l.task_id=r.task_id))"
+            " > 1e-9").fetchone()[0]
+        if apply:
+            if changes:
+                db.executemany("UPDATE llm_calls SET input_tokens=?, cost_usd=? WHERE id=?", changes)
+            db.execute(
+                "UPDATE runs SET cost_usd = COALESCE("
+                "  (SELECT SUM(l.cost_usd) FROM llm_calls l WHERE l.task_id = runs.task_id), 0)")
             if migrate:
                 db.execute(f"PRAGMA user_version = {DB_SCHEMA_VERSION}")
             db.commit()
@@ -390,6 +401,7 @@ def recost(apply: bool = typer.Option(False, "--apply", help="Write the correcte
               f"${before:.4f} -> ${after:.4f} ({after - before:+.4f})")
     if migrate:
         con.print(f"  cached-input split applied to {split} rows")
+    con.print(f"  {verb.lower()} runs.cost_usd on {run_delta} runs (rebuilt from their calls)")
     if not apply:
         con.print("[dim]dry run - pass --apply to write[/]")
 
