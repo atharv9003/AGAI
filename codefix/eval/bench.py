@@ -127,6 +127,7 @@ SELECT r.bench_id, r.task_id, r.bug_id, r.arch, r.llm_mode, r.outcome, r.failure
        (SELECT COALESCE(SUM(input_tokens+output_tokens),0) FROM llm_calls l WHERE l.task_id=r.task_id AND l.agent<>'judge') AS tokens,
        (SELECT COALESCE(SUM(input_tokens),0) FROM llm_calls l WHERE l.task_id=r.task_id AND l.agent<>'judge') AS input_tokens,
        (SELECT COALESCE(SUM(output_tokens),0) FROM llm_calls l WHERE l.task_id=r.task_id AND l.agent<>'judge') AS output_tokens,
+       (SELECT COALESCE(SUM(cache_read_tokens),0) FROM llm_calls l WHERE l.task_id=r.task_id AND l.agent<>'judge') AS cached_tokens,
        (SELECT COUNT(*) FROM messages m WHERE m.task_id=r.task_id) AS messages,
        (SELECT COUNT(*) FROM tool_calls t WHERE t.task_id=r.task_id) AS tool_calls,
        (SELECT COALESCE(SUM(latency_ms),0) FROM messages m WHERE m.task_id=r.task_id AND m.sender='diagnoser' AND m.status IN ('success','failure')) AS diagnoser_ms,

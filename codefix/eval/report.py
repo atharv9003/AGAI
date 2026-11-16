@@ -159,6 +159,46 @@ def write_report(bench_id: str, path: Path, rows: list[dict] | None = None) -> P
             lines.append(f"| {d} | " + " | ".join(
                 f"{sum(1 for r in rs if label(r) == a and r['objective_pass'])}/{sum(1 for r in rs if label(r) == a)}"
                 for a in s) + " |")
+    lines += _cost_and_time(rows)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path
+
+
+def _cost_and_time(rows: list[dict]) -> list[str]:
+    """Totals, plus the counterfactual: the same token volume on ONE model for every agent.
+
+    This is what justifies the per-role model mix. CodeFix puts the Diagnoser and Fixer on the
+    flagship and the Manager and Judge on the cheap model; the table shows what the same work
+    would have cost had every agent used one model throughout.
+    """
+    from codefix import config
+
+    n = len(rows)
+    if not n:
+        return []
+    secs = sum((r["duration_ms"] or 0) for r in rows) / 1000
+    actual = sum(r["pipeline_cost_usd"] or 0 for r in rows)
+    judge = sum(r["judge_cost_usd"] or 0 for r in rows)
+    tok_in = sum(r.get("input_tokens") or 0 for r in rows)
+    tok_out = sum(r.get("output_tokens") or 0 for r in rows)
+    tok_cached = sum(r.get("cached_tokens") or 0 for r in rows)
+
+    out = ["\n## Cost and running time\n",
+           f"- **{n} runs** in **{secs / 60:.1f} min** of wall-clock "
+           f"(mean {secs / n:.1f}s/run)",
+           f"- **Pipeline cost ${actual:.3f}** (${actual / n:.4f}/run); "
+           f"LLM-as-judge a further ${judge:.3f}",
+           f"- Tokens: {tok_in:,} fresh in / {tok_cached:,} cached in / {tok_out:,} out"]
+
+    prices = config.settings().estimate_pricing
+    if prices and (tok_in or tok_out):
+        out += ["\nSame token volume, every agent on one model (list prices, cached input"
+                " charged at each model's cache-read rate):\n",
+                "| If all agents ran on | Estimated cost | vs actual |", "|---|---|---|"]
+        for name, p in prices.items():
+            est = (tok_in * p.input + tok_cached * p.cache_read + tok_out * p.output) / 1_000_000
+            delta = f"{est / actual:.2f}x" if actual else "n/a"
+            out.append(f"| {name} | ${est:.3f} | {delta} |")
+        out.append(f"| **actual (per-role mix)** | **${actual:.3f}** | 1.00x |")
+    return out

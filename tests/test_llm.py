@@ -215,8 +215,9 @@ def test_zai_costs_the_paid_rate_including_cached_input(monkeypatch):
 
     res = llm.structured(role="diagnoser", system="s", messages=[], schema=ReActStep)
 
+    # 500 prompt tokens of which 200 cached -> 300 billed at the input rate, 200 at the cached rate
     # glm-5.3: $1.40 input / $4.40 output / $0.26 cached-read per 1M
-    assert res.cost_usd == pytest.approx((500 * 1.40 + 100 * 4.40 + 200 * 0.26) / 1e6)
+    assert res.cost_usd == pytest.approx((300 * 1.40 + 100 * 4.40 + 200 * 0.26) / 1e6)
     assert res.cost_usd > 0
 
 
@@ -241,8 +242,8 @@ def test_flash_is_priced_as_flash_not_as_the_flagship(monkeypatch):
 
     res = llm.structured(role="judge", system="s", messages=[], schema=ReActStep)
 
-    # glm-5.3-flash: $0.15 input / $0.50 output / $0.03 cached-read per 1M
-    assert res.cost_usd == pytest.approx((500 * 0.15 + 100 * 0.50 + 200 * 0.03) / 1e6)
+    # glm-5.3-flash: $0.15 input / $0.50 output / $0.03 cached-read per 1M (300 fresh + 200 cached)
+    assert res.cost_usd == pytest.approx((300 * 0.15 + 100 * 0.50 + 200 * 0.03) / 1e6)
 
 
 def test_server_side_model_aliasing_is_reported(monkeypatch, capsys):
@@ -322,3 +323,29 @@ def test_make_llm_requires_a_zai_key_for_the_default_provider(monkeypatch):
 
     with pytest.raises(LLMError, match="ZAI_API_KEY is not set"):
         make_llm("live", config.load_settings())
+
+
+def test_cached_prompt_tokens_are_not_billed_twice(monkeypatch):
+    """OpenAI-dialect APIs report prompt_tokens INCLUDING the cached prefix, but cost_usd
+    assumes the three counts are disjoint (Anthropic's convention). Without normalising, cached
+    tokens are charged the full input rate AND the cache-read fee on top.
+
+    Real impact: in a 140-run benchmark 54% of input tokens were cached, overstating the
+    reported cost by about a quarter.
+    """
+    monkeypatch.setenv("ZAI_API_KEY", "test-not-used")
+    llm = ZaiLLM(config.load_settings())
+    llm.client = FakeHTTPClient([FakeHTTPResponse({
+        "model": "glm-5.3",
+        "choices": [{"message": {"content": json.dumps(GOOD_STEP)}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 1000, "completion_tokens": 100,
+                  "prompt_tokens_details": {"cached_tokens": 600}},
+    })])
+
+    res = llm.structured(role="diagnoser", system="s", messages=[], schema=ReActStep)
+
+    # 400 fresh input + 600 cached, never 1000 input + 600 cached
+    assert res.usage.input_tokens == 400
+    assert res.usage.cache_read_input_tokens == 600
+    # glm-5.3: $1.40 input / $4.40 output / $0.26 cached
+    assert res.cost_usd == pytest.approx((400 * 1.40 + 100 * 4.40 + 600 * 0.26) / 1e6)

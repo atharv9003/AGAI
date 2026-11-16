@@ -20,10 +20,10 @@
 | Reference fix: same file(s) changed | 47/47 | 46/46 | 46/47 |
 | Mean wall-clock / run | 62.1s | 58.5s | 55.9s |
 | Wall-clock std-dev | 23.0s | 12.5s | 11.2s |
-| Mean pipeline cost / run | $0.0336 | $0.0309 | $0.0280 |
-| Total pipeline cost | $1.577 | $1.423 | $1.317 |
+| Mean pipeline cost / run | $0.0230 | $0.0202 | $0.0184 |
+| Total pipeline cost | $1.081 | $0.929 | $0.864 |
 | Mean LLM calls / run | 4.2 | 4.1 | 3.9 |
-| Mean tokens / run | 16549 | 15500 | 13919 |
+| Mean tokens / run | 9013 | 7832 | 7031 |
 | Mean envelope size (bytes) | 396 | 469 | 460 |
 
 ## Per-agent mean latency (seconds per run)
@@ -79,3 +79,17 @@ Bottleneck agent per architecture: **hierarchical** → diagnoser, **p2p** → d
 | easy | 18/18 | 18/18 | 18/18 |
 | medium | 23/23 | 22/22 | 22/23 |
 | hard | 6/6 | 6/6 | 6/6 |
+
+## Cost and running time
+
+- **140 runs** in **136.4 min** of wall-clock (mean 58.5s/run)
+- **Pipeline cost $2.874** ($0.0205/run); LLM-as-judge a further $0.026
+- Tokens: 765,569 fresh in / 1,030,592 cached in / 348,801 out
+
+Same token volume, every agent on one model (list prices, cached input charged at each model's cache-read rate):
+
+| If all agents ran on | Estimated cost | vs actual |
+|---|---|---|
+| glm-5.3 (all agents) | $2.874 | 1.00x |
+| glm-5.3-flash (all agents) | $0.320 | 0.11x |
+| **actual (per-role mix)** | **$2.874** | 1.00x |

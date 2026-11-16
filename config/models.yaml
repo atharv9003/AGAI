@@ -70,8 +70,8 @@ pricing:
 # estimate — i.e. the same token volume if every agent ran on a single model instead of the
 # per-role mix above. Same source and date as `pricing`.
 estimate_pricing:
-  glm-5.3 (all agents):       {input: 1.40, output: 4.40}
-  glm-5.3-flash (all agents): {input: 0.15, output: 0.50}
+  glm-5.3 (all agents):       {input: 1.40, output: 4.40, cache_read: 0.26}
+  glm-5.3-flash (all agents): {input: 0.15, output: 0.50, cache_read: 0.03}
 
 pipeline:
   max_attempts: 3            # Fixer attempts before escalating to a human

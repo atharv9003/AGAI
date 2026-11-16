@@ -327,6 +327,73 @@ def crew_serve(host: str = "127.0.0.1", port: int = 8100):
     uvicorn.run(build_app(url), host=host, port=port, log_level="warning")
 
 
+#: PRAGMA user_version on runs.db. 1 = cached prompt tokens have been split out of input_tokens.
+DB_SCHEMA_VERSION = 1
+
+
+@app.command("recost")
+def recost(apply: bool = typer.Option(False, "--apply", help="Write the corrected costs (default: dry run)"),
+           split_cached: bool = typer.Option(
+               False, "--split-cached-input",
+               help="One-time migration: subtract cached tokens from input_tokens on old rows")):
+    """Recompute llm_calls.cost_usd from stored token counts and the current price table.
+
+    Use after a pricing correction so historical runs do not have to be re-executed. Token
+    counts are facts recorded at call time; only the money is recomputed.
+
+    `--split-cached-input` additionally repairs rows written before the OpenAI-dialect usage
+    fix, where `input_tokens` was stored as the provider's `prompt_tokens` - which *includes*
+    the cached prefix - so cached tokens were billed at the full input rate and then charged the
+    cache-read fee on top. It is guarded by PRAGMA user_version so it can never run twice.
+    """
+    import sqlite3
+
+    from codefix.observability.pricing import Usage, cost_usd
+
+    pricing = config.settings().pricing
+    db = sqlite3.connect(config.DB_PATH)
+    db.row_factory = sqlite3.Row
+    try:
+        version = db.execute("PRAGMA user_version").fetchone()[0]
+        migrate = split_cached and version < DB_SCHEMA_VERSION
+        if split_cached and not migrate:
+            con.print(f"[yellow]cached-input split already applied (user_version={version});"
+                      " skipping it[/]")
+
+        rows = db.execute(
+            "SELECT id, served_model, model, input_tokens, output_tokens,"
+            " cache_read_tokens, cache_write_tokens, cost_usd FROM llm_calls").fetchall()
+        changes, before, after, split = [], 0.0, 0.0, 0
+        for r in rows:
+            cached = r["cache_read_tokens"] or 0
+            inp = r["input_tokens"] or 0
+            if migrate and cached and inp >= cached:
+                inp -= cached
+                split += 1
+            new = cost_usd(r["served_model"] or r["model"],
+                           Usage(inp, r["output_tokens"] or 0, cached,
+                                 r["cache_write_tokens"] or 0), pricing)
+            before += r["cost_usd"] or 0
+            after += new
+            if abs(new - (r["cost_usd"] or 0)) > 1e-9 or (migrate and inp != (r["input_tokens"] or 0)):
+                changes.append((inp, new, r["id"]))
+        if apply and changes:
+            db.executemany("UPDATE llm_calls SET input_tokens=?, cost_usd=? WHERE id=?", changes)
+            if migrate:
+                db.execute(f"PRAGMA user_version = {DB_SCHEMA_VERSION}")
+            db.commit()
+    finally:
+        db.close()
+
+    verb = "Updated" if apply else "Would update"
+    con.print(f"{verb} {len(changes)} of {len(rows)} llm_calls: "
+              f"${before:.4f} -> ${after:.4f} ({after - before:+.4f})")
+    if migrate:
+        con.print(f"  cached-input split applied to {split} rows")
+    if not apply:
+        con.print("[dim]dry run - pass --apply to write[/]")
+
+
 @app.command("seed")
 def seed(task_ids: str = typer.Option("", help="Comma list of task ids; default: pick a spread automatically"),
          limit: int = typer.Option(12, help="How many runs to seed when picking automatically")):

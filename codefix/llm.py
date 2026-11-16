@@ -333,10 +333,16 @@ class OpenAICompatLLM(BaseLLM):
             self._check_alias(rc.model, data.get("model") or "")
             text = self._content_text(answer.get("content") or "")
             usage_data = data.get("usage") or {}
+            # Normalise to Anthropic's convention, which `cost_usd` assumes: the three token
+            # counts are DISJOINT. OpenAI-dialect APIs report `prompt_tokens` as the total
+            # *including* the cached prefix, so billing input+cached as written would charge the
+            # full input rate on cached tokens and then add the cache-read fee on top of it.
+            prompt = usage_data.get("prompt_tokens", 0) or 0
+            cached = (usage_data.get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0
             usage = Usage(
-                input_tokens=usage_data.get("prompt_tokens", 0) or 0,
+                input_tokens=max(prompt - cached, 0),
                 output_tokens=usage_data.get("completion_tokens", 0) or 0,
-                cache_read_input_tokens=(usage_data.get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0,
+                cache_read_input_tokens=cached,
             )
             result = LLMResult(
                 parsed=None,  # type: ignore[arg-type]
