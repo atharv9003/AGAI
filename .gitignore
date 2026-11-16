@@ -15,3 +15,4 @@ traces/
 bench_*.log
 
 bench_prompts.err
+.claude
