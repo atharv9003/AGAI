@@ -95,28 +95,55 @@ def restore_seed(data_dir: Path | None = None, seed_dir: Path | None = None) -> 
 
 
 def pick_demo_runs(limit: int = 12, src_db: Path | None = None) -> list[str]:
-    """A representative spread for the dashboard: prefer variety of architecture and outcome,
-    and make sure a retried run is included — the retry loop is the point of the system."""
+    """A representative spread of finished live runs for the deployed dashboard.
+
+    Three passes, so the dashboard shows variety *and* is actually full:
+      1. retried / escalated runs first — the bounded self-correction loop is the point of the
+         system, and a wall of first-attempt successes undersells it;
+      2. one run per (architecture, outcome) so every architecture appears;
+      3. fill the remaining slots, preferring bugs not already shown.
+    """
     src = Path(src_db or config.DB_PATH)
     with sqlite3.connect(src) as c:
         c.row_factory = sqlite3.Row
         rows = c.execute(
-            "SELECT task_id, arch, outcome, attempts FROM runs "
+            "SELECT task_id, arch, outcome, attempts, bug_id FROM runs "
             "WHERE llm_mode != 'mock' AND outcome IS NOT NULL ORDER BY created_at DESC"
         ).fetchall()
+
     picked: list[str] = []
-    seen: set[tuple] = set()
-    for want_retry in (True, False):          # one pass for retried runs, then fill
-        for r in rows:
-            if len(picked) >= limit:
-                break
-            if (r["attempts"] or 1) > 1 and not want_retry:
-                continue
-            if want_retry and (r["attempts"] or 1) <= 1:
-                continue
-            key = (r["arch"], r["outcome"], (r["attempts"] or 1) > 1)
-            if key in seen and len(picked) > 3:
-                continue
-            seen.add(key)
+    taken: set[str] = set()
+
+    def take(r) -> None:
+        if r["task_id"] not in taken and len(picked) < limit:
+            taken.add(r["task_id"])
             picked.append(r["task_id"])
+
+    for r in rows:                                   # 1. interesting runs
+        if (r["attempts"] or 1) > 1 or r["outcome"] != "passed":
+            take(r)
+    seen_keys: set[tuple] = set()
+    for r in rows:                                   # 2. cover every architecture/outcome
+        key = (r["arch"], r["outcome"])
+        if key not in seen_keys:
+            seen_keys.add(key)
+            take(r)
+    # 3. fill by round-robin over architectures, newest first, preferring bugs not yet shown.
+    # Without the round-robin the fill just drains the most recent architecture and the dashboard
+    # ends up looking like only one of them was ever run.
+    by_arch: dict[str, list] = {}
+    for r in rows:
+        by_arch.setdefault(r["arch"], []).append(r)
+    seen_bugs = {r["bug_id"] for r in rows if r["task_id"] in taken}
+    for prefer_new_bug in (True, False):
+        queues = {a: list(rs) for a, rs in by_arch.items()}
+        while any(queues.values()) and len(picked) < limit:
+            for arch in sorted(queues):
+                while queues[arch]:
+                    r = queues[arch].pop(0)
+                    if prefer_new_bug and r["bug_id"] in seen_bugs:
+                        continue
+                    seen_bugs.add(r["bug_id"])
+                    take(r)
+                    break
     return picked[:limit]
