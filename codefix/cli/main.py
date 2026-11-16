@@ -396,15 +396,26 @@ def recost(apply: bool = typer.Option(False, "--apply", help="Write the correcte
 
 @app.command("seed")
 def seed(task_ids: str = typer.Option("", help="Comma list of task ids; default: pick a spread automatically"),
+         bench_id: str = typer.Option("", "--bench-id", help="Seed every run of this benchmark"),
          limit: int = typer.Option(12, help="How many runs to seed when picking automatically")):
     """Bake finished runs into benchmarks/seed/ so a cold deployed instance is never blank.
 
     The Dockerfile copies benchmarks/ into the image, and the web app installs the seed on
     startup when the data directory has no database yet.
     """
+    import sqlite3
+
     from codefix.eval.seed import SEED_DIR, export_seed, pick_demo_runs
 
-    ids = [t.strip() for t in task_ids.split(",") if t.strip()] or pick_demo_runs(limit)
+    ids = [t.strip() for t in task_ids.split(",") if t.strip()]
+    if not ids and bench_id:
+        with sqlite3.connect(config.DB_PATH) as c:
+            ids = [r[0] for r in c.execute(
+                "SELECT task_id FROM runs WHERE bench_id=? ORDER BY created_at", (bench_id,))]
+        if not ids:
+            con.print(f"[red]No runs found for bench_id {bench_id!r}[/]")
+            raise typer.Exit(1)
+    ids = ids or pick_demo_runs(limit)
     if not ids:
         con.print("[red]No finished non-mock runs to seed. Run `codefix demo` or `codefix bench` first.[/]")
         raise typer.Exit(1)
