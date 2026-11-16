@@ -331,6 +331,22 @@ def crew_serve(host: str = "127.0.0.1", port: int = 8100):
 DB_SCHEMA_VERSION = 1
 
 
+@app.command("compare")
+def compare_cmd(out: Path = typer.Option(None, help="Also write the Markdown to this path")):
+    """Compare prompt variants and personas against the main benchmark's baseline arm.
+
+    The sweeps vary one factor at a time; this joins them back to the
+    hierarchical/react/default/developer runs from the architecture benchmark, paired on the
+    same bugs, so no measurement is paid for twice.
+    """
+    from codefix.eval.compare import report
+
+    text = report(out)
+    con.print(text)
+    if out:
+        con.print(f"[dim]written to {out}[/]")
+
+
 @app.command("recost")
 def recost(apply: bool = typer.Option(False, "--apply", help="Write the corrected costs (default: dry run)"),
            split_cached: bool = typer.Option(
