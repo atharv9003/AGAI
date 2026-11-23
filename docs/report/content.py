@@ -22,11 +22,10 @@ SHOTS = ROOT / "docs" / "report" / "screenshots"
 TITLE = "CodeFix AI"
 SUBTITLE = "Autonomous Multi-Agent Software Bug Resolution"
 URL = "https://codefix-ai-324501187617.asia-south1.run.app"
-REPO = "https://github.com/Abhiram12062005/AGAI"
+REPO = ""
 
 TEAM = [("Singidi Satya Karthikeya", "220353"),
-        ("Naman Agarwal", "230537"),
-        ("Abhiram Putta", "230557")]
+        ("Naman Agarwal", "230537")]
 
 C = WD_ALIGN_PARAGRAPH.CENTER
 J = WD_ALIGN_PARAGRAPH.JUSTIFY
@@ -767,25 +766,24 @@ def _team_and_conclusions(doc, helpers, stats, total_runs, total_cost, facts):
 
     doc.add_heading("8  Team Responsibility / Self-contribution Matrix", level=1)
     table(doc, ["Activity"] + [f"{n} ({r})" for n, r in
-                               [("Karthikeya", TEAM[0][1]), ("Naman", TEAM[1][1]),
-                                ("Abhiram", TEAM[2][1])]], [
-        ["Agent design / multi-agent architecture", "Lead", "Contributed", "Contributed"],
-        ["Agent orchestration (Manager, retry policy)", "Contributed", "Lead", "—"],
-        ["State management (Blackboard, envelopes)", "—", "Contributed", "Lead"],
-        ["MCP design (server, 16 tools, sandbox)", "Contributed", "—", "Lead"],
-        ["A2A communication (ADK ⇄ CrewAI)", "—", "Contributed", "Lead"],
-        ["Guardrails / callbacks", "Contributed", "Lead", "Contributed"],
-        ["Observability (tracing, run view)", "—", "Lead", "Contributed"],
-        ["Diagnoser (ReAct) and Fixer agents", "Lead", "—", "Contributed"],
-        ["Tester and PR agents", "—", "Contributed", "Lead"],
-        ["RAG: vector store, retrieval, citations", "Lead", "—", "—"],
-        ["Code search and static-analysis tooling", "Lead", "—", "Contributed"],
-        ["Integration and testing", "Contributed", "Contributed", "Contributed"],
-        ["Evaluation and documentation", "Contributed", "Lead", "Contributed"],
-        ["Presentation / interface UI", "Contributed", "Lead", "—"],
-        ["Deployment (Docker, Cloud Run, secrets)", "Contributed", "—", "Lead"],
-        ["End-to-end evaluation (time and cost)", "Contributed", "Lead", "Contributed"],
-    ], widths=[2.7, 1.2, 1.2, 1.2], size=9,
+                               [("Karthikeya", TEAM[0][1]), ("Naman", TEAM[1][1])]], [
+        ["Agent design / multi-agent architecture", "Lead", "Contributed"],
+        ["Agent orchestration (Manager, retry policy)", "Contributed", "Lead"],
+        ["State management (Blackboard, envelopes)", "Contributed", "Lead"],
+        ["MCP design (server, 16 tools, sandbox)", "Lead", "Contributed"],
+        ["A2A communication (ADK ⇄ CrewAI)", "Contributed", "Lead"],
+        ["Guardrails / callbacks", "Contributed", "Lead"],
+        ["Observability (tracing, run view)", "Contributed", "Lead"],
+        ["Diagnoser (ReAct) and Fixer agents", "Lead", "Contributed"],
+        ["Tester and PR agents", "Contributed", "Lead"],
+        ["RAG: vector store, retrieval, citations", "Lead", "Contributed"],
+        ["Code search and static-analysis tooling", "Lead", "Contributed"],
+        ["Integration and testing", "Contributed", "Contributed"],
+        ["Evaluation and documentation", "Contributed", "Lead"],
+        ["Presentation / interface UI", "Contributed", "Lead"],
+        ["Deployment (Docker, Cloud Run, secrets)", "Lead", "Contributed"],
+        ["End-to-end evaluation (time and cost)", "Contributed", "Lead"],
+    ], widths=[3.5, 1.5, 1.5], size=9,
         caption="Table 8.1  Contribution matrix. “Lead” denotes primary responsibility "
                 "for design and implementation; “Contributed” denotes substantive work "
                 "on the item.")

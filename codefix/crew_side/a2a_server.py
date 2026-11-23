@@ -53,7 +53,7 @@ def agent_card(url: str | None = None) -> AgentCard:
     return AgentCard(
         name="codefix-crew", version="0.2.0",
         description="CodeFix AI worker agents built with CrewAI (Fixer, Reviewer, Tester, PR).",
-        provider=AgentProvider(organization="CodeFix AI (course project)", url="https://github.com/Abhiram12062005/AGAI"),
+        provider=AgentProvider(organization="CodeFix AI", url=""),
         supported_interfaces=[AgentInterface(url=url or public_url(), protocol_binding="JSONRPC",
                                              protocol_version=PROTOCOL_VERSION_CURRENT)],
         capabilities=AgentCapabilities(streaming=False),
