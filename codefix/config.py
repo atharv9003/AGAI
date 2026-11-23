@@ -48,7 +48,7 @@ class PipelineConfig(BaseModel):
 
 
 class Settings(BaseModel):
-    provider: Literal["anthropic", "zai"] = "zai"
+    provider: Literal["anthropic", "zai", "omnikey", "gemini"] = "omnikey"
     roles: dict[str, RoleConfig]
     pricing: dict[str, Price] = Field(default_factory=dict)
     # paid-tier list prices used only for the benchmark's "what would this cost" estimate

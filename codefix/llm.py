@@ -423,6 +423,152 @@ class ZaiLLM(OpenAICompatLLM):
         return out
 
 
+class OmnikeyLLM(BaseLLM):
+    """Omnikey / Gemini unified endpoint adapter (Gemini REST format)."""
+
+    mode = "live"
+    API_KEY_ENV = ("OMNIKEY_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY")
+
+    def __init__(self, settings: Settings, telemetry: Telemetry | None = None):
+        super().__init__(settings, telemetry)
+        import httpx
+
+        self._httpx = httpx
+        self.base_url = os.environ.get(
+            "OMNIKEY_BASE_URL",
+            "https://omnikey-ai-unified-key-manager.onrender.com/v1beta",
+        ).rstrip("/")
+        self.client = httpx.Client(
+            timeout=120,
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key(),
+            },
+        )
+
+    @classmethod
+    def api_key(cls) -> str:
+        return next((v for v in (os.environ.get(n) for n in cls.API_KEY_ENV) if v), "")
+
+    @staticmethod
+    def _content_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "\n".join(
+                str(block["text"])
+                for block in content
+                if isinstance(block, dict) and isinstance(block.get("text"), str)
+            )
+        return json.dumps(content, ensure_ascii=False)
+
+    def _format_contents(self, messages: list[dict]) -> list[dict]:
+        contents = []
+        for m in messages:
+            role = "model" if m.get("role") in ("assistant", "model") else "user"
+            text = self._content_text(m.get("content", ""))
+            if text:
+                contents.append({"role": role, "parts": [{"text": text}]})
+        return contents or [{"role": "user", "parts": [{"text": "Continue"}]}]
+
+    def structured(
+        self,
+        *,
+        role: str,
+        system: str,
+        messages: list[dict],
+        schema: type[BaseModel],
+        task_id: str | None = None,
+        agent: str | None = None,
+    ) -> LLMResult:
+        rc = self.role(role)
+        agent = agent or role
+        js = strict_schema(schema)
+        started = time.time()
+        msgs = list(messages)
+        last_err: Exception | None = None
+
+        schema_prompt = (
+            "\n\nReturn only a valid JSON object conforming to this JSON Schema:\n"
+            + json.dumps(js, ensure_ascii=False)
+        )
+        system_text = system + schema_prompt
+
+        for _ in range(2):
+            contents = self._format_contents(msgs)
+            payload = {
+                "systemInstruction": {"parts": [{"text": system_text}]},
+                "contents": contents,
+                "generationConfig": {
+                    "responseMimeType": "application/json",
+                },
+            }
+            url = f"{self.base_url}/models/{rc.model}:generateContent"
+
+            try:
+                resp = self.client.post(url, json=payload)
+                if resp.is_error:
+                    detail = resp.text
+                    try:
+                        detail = resp.json().get("error", {}).get("message", resp.text)
+                    except Exception:
+                        pass
+                    self._emit(task_id, agent, None, rc.model, int((time.time() - started) * 1000),
+                               f"{resp.status_code}: {detail}")
+                    raise LLMError(f"{rc.model} API error {resp.status_code}: {detail}")
+                data = resp.json()
+            except LLMError:
+                raise
+            except self._httpx.RequestError as e:
+                self._emit(task_id, agent, None, rc.model, int((time.time() - started) * 1000), "connection")
+                raise LLMError(f"connection error calling {rc.model}: {e}") from e
+            except Exception as e:
+                self._emit(task_id, agent, None, rc.model, int((time.time() - started) * 1000),
+                           f"invalid API response: {e}")
+                raise LLMError(f"{rc.model} returned an invalid API response: {e}") from e
+
+            latency = int((time.time() - started) * 1000)
+            candidates = data.get("candidates", [])
+            if not candidates:
+                raise LLMError(f"{rc.model} returned no candidates: {data}")
+            cand = candidates[0]
+            finish_reason = cand.get("finishReason")
+            if finish_reason in ("SAFETY", "RECITATION", "BLOCKLIST"):
+                self._emit(task_id, agent, None, rc.model, latency, f"refusal: {finish_reason}")
+                raise LLMRefusal(f"{rc.model} refused: {finish_reason}")
+
+            parts = cand.get("content", {}).get("parts", [])
+            text = "".join(p.get("text", "") for p in parts)
+            usage_data = data.get("usageMetadata", {})
+            prompt_tok = usage_data.get("promptTokenCount", 0) or 0
+            cand_tok = usage_data.get("candidatesTokenCount", 0) or 0
+            usage = Usage(input_tokens=prompt_tok, output_tokens=cand_tok)
+            result = LLMResult(
+                parsed=None,  # type: ignore[arg-type]
+                text=text,
+                model=rc.model,
+                served_model=data.get("modelVersion", rc.model),
+                usage=usage,
+                cost_usd=cost_usd(rc.model, usage, self.settings.pricing),
+                latency_ms=latency,
+                stop_reason=finish_reason,
+                assistant_content=[{"type": "text", "text": text}],
+            )
+            try:
+                result.parsed = schema.model_validate(extract_json(text))
+                self._emit(task_id, agent, result, rc.model, latency)
+                return result
+            except (json.JSONDecodeError, ValidationError) as e:
+                last_err = e
+                self._emit(task_id, agent, result, rc.model, latency, f"invalid output: {str(e)[:200]}")
+                msgs = msgs + [
+                    {"role": "assistant", "content": text},
+                    {"role": "user", "content": f"That output did not validate ({str(e)[:500]}). Reply again with only valid JSON for the schema."},
+                ]
+
+        raise LLMError(f"{rc.model} produced invalid structured output: {last_err}")
+
+
 MockHandler = Callable[[str, str, list[dict], type[BaseModel], int], dict]
 
 
@@ -458,6 +604,10 @@ def make_llm(mode: str, settings: Settings, telemetry: Telemetry | None = None,
         if handler is None:
             raise ValueError("mock mode needs a handler")
         return MockLLM(settings, handler, telemetry)
+    if settings.provider in ("omnikey", "gemini"):
+        if not OmnikeyLLM.api_key():
+            raise LLMError("OMNIKEY_API_KEY (or GEMINI_API_KEY) is not set (put it in .env) — or run with --llm mock")
+        return OmnikeyLLM(settings, telemetry)
     if settings.provider == "zai":
         if not ZaiLLM.api_key():
             raise LLMError("ZAI_API_KEY is not set (put your Z.AI key in .env) — or run with --llm mock")

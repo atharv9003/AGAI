@@ -1,55 +1,28 @@
-# Z.AI GLM models over the OpenAI-compatible endpoint (https://api.z.ai/api/paas/v4).
-# Create a key at https://z.ai and set ZAI_API_KEY in .env. This is a PAID API: every call
-# below is billed, and reasoning tokens are billed as output. The `thinking` flag and the
-# per-role `effort` exist to keep that bill proportionate to the job.
-provider: zai
+# Omnikey / Gemini unified endpoint (https://omnikey-ai-unified-key-manager.onrender.com/v1beta).
+# Set OMNIKEY_API_KEY in .env.
+provider: omnikey
 
-# IMPORTANT - only use ids this plan actually serves. Probed 2026-11-15: this account serves
-# exactly TWO models and silently aliases the rest, so a config naming glm-4.6/4.7/5.1/5.2 is a
-# trap -- it looks like a four-model setup and is really a two-model one.
-#
-#     requested glm-5.3 / glm-5.2 / glm-5.1 / glm-5          -> served  glm-5.3
-#     requested glm-4.7 / glm-4.6 / glm-4.5-air              -> served  glm-5.3-flash
-#
-# ZaiLLM warns on stderr whenever the served model differs from the requested one.
-#
-# Per-role selection (task-model fit), using the two real ids:
-#
-#   manager   - routing only (two or three legal transitions). Cheapest model, lowest effort.
-#   diagnoser - multi-step ReAct over traces and code: the hardest reasoning -> flagship.
-#   fixer     - code generation from an already-localised diagnosis -> flagship.
-#   judge     - LLM-as-judge. MUST differ from BOTH generators (self-preference bias), enforced
-#               at load time in codefix/config.py. With two served models that forces the judge
-#               onto the other one -- which is exactly the independence the method needs.
-#
-# Both served models use FORCED thinking (it cannot be disabled), so reasoning tokens are always
-# billed as output and `effort` is the only cost lever. Both accept only low/high/max; anything
-# else is normalised to the nearest supported level by ZaiLLM.normalize_effort.
 roles:
   manager:
-    model: glm-5.3-flash
+    model: gemini-2.5-flash-lite
     effort: low
     max_tokens: 2048
   diagnoser:
-    model: glm-5.3
+    model: gemini-2.5-flash
     effort: high
     max_tokens: 16000
   fixer:
-    model: glm-5.3
+    model: gemini-2.5-flash
     effort: high
     max_tokens: 16000
   judge:
-    model: glm-5.3-flash
+    model: gemini-2.5-flash-lite
     effort: low
     max_tokens: 8000
 
-# USD per 1M text tokens. Source: Z.AI pricing page, read 2026-11-15. `cache_read` is the
-# cached-input rate; Z.AI currently advertises cached-input storage as free, so cache_write is 0.
-#
-# glm-5.3-flash MUST have its own row. cost_usd() falls back to a prefix match for unknown
-# models, and "glm-5.3-flash".startswith("glm-5.3") -- so without this row every flash call
-# would be billed at the flagship's rate, roughly 9x too high.
 pricing:
+  gemini-2.5-flash:      {input: 0.075, output: 0.30, cache_read: 0.018}
+  gemini-2.5-flash-lite: {input: 0.037, output: 0.15, cache_read: 0.009}
   glm-5.3-flash:     {input: 0.15, output: 0.50, cache_read: 0.03}
   glm-5.3:           {input: 1.40, output: 4.40, cache_read: 0.26}
   glm-5.2:           {input: 1.40, output: 4.40, cache_read: 0.26}

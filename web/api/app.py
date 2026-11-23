@@ -57,10 +57,15 @@ _mount_a2a()
 
 
 def _has_key() -> bool:
-    if config.settings().provider == "zai":
+    s = config.settings()
+    if s.provider == "zai":
         from codefix.llm import ZaiLLM
 
         return bool(ZaiLLM.api_key())
+    if s.provider in ("omnikey", "gemini"):
+        from codefix.llm import OmnikeyLLM
+
+        return bool(OmnikeyLLM.api_key())
     return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
 
 
