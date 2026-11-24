@@ -75,13 +75,34 @@ def strict_schema(model: type[BaseModel]) -> dict:
 
 
 def extract_json(text: str) -> Any:
+    text = text.strip()
+    if not text:
+        raise json.JSONDecodeError("Empty text", text, 0)
+
+    # 1. Try direct parse with strict=False (allows unescaped newlines/tabs in string values)
     try:
-        return json.loads(text)
+        return json.loads(text, strict=False)
     except json.JSONDecodeError:
-        m = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.S) or re.search(r"(\{.*\})", text, re.S)
-        if not m:
-            raise
-        return json.loads(m.group(1))
+        pass
+
+    # 2. Extract from markdown code fence or first/last braces if wrapped in commentary
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.S) or re.search(r"(\{.*\})", text, re.S)
+    candidate = m.group(1).strip() if m else text
+
+    try:
+        return json.loads(candidate, strict=False)
+    except json.JSONDecodeError:
+        pass
+
+    # 3. Strip non-printable ASCII control characters (keeping \t, \n, \r)
+    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", candidate)
+    try:
+        return json.loads(cleaned, strict=False)
+    except json.JSONDecodeError:
+        pass
+
+    # 4. Fallback to standard json.loads so proper error is raised for repair turns
+    return json.loads(candidate)
 
 
 Telemetry = Callable[[dict], None]
